@@ -13,6 +13,8 @@
 
 #include <arduinoFFT.h>
 
+#include <LittleFS.h>
+
 // ===== WIFI CONFIG =====
 bool modoAP = false;
 
@@ -358,119 +360,10 @@ String gerarJSON() {
   return json;
 }
 
-// ===== HTML =====
-String gerarHTML() {
-  return R"rawliteral(
-<!DOCTYPE html>
-<html>
-<body>
-
-<h2>ESP Monitor</h2>
-
-<button onclick="mostrar('monitor')">Monitoramento</button>
-<button onclick="mostrar('config')">Configurações</button>
-
-<div id="monitor">
-  <h3>Vibração</h3>
-  <div style="overflow-x:auto">
-    <canvas id="vib" height="150" style="min-width:1000px"></canvas>
-  </div>
-
-  <h3>Temperatura</h3>
-  <div style="overflow-x:auto">
-    <canvas id="temp" height="150" style="min-width:1000px"></canvas>
-  </div>
-
-  <h3>Histórico</h3>
-  <div style="overflow-x:auto">
-    <canvas id="hist" height="150" style="min-width:1000px"></canvas>
-  </div>
-
-  <br>
-  <a href="/csv">📥 Baixar CSV</a>
-</div>
-
-<div id="config" style="display:none">
-  <h3>Configuração WiFi</h3>
-  <form action="/salvar">
-    SSID: <input name="s"><br><br>
-    Senha: <input name="p"><br><br>
-    <button type="submit">Salvar</button>
-  </form>
-</div>
-
-<script>
-function mostrar(sec){
-  document.getElementById("monitor").style.display="none";
-  document.getElementById("config").style.display="none";
-  document.getElementById(sec).style.display="block";
-}
-
-let vib=[], temp=[];
-let vibHist=[], tempHist=[];
-
-function draw(ctx,c,data,color){
- let w=Math.max(300,data.length*5);
- c.width=w;
-
- ctx.clearRect(0,0,w,c.height);
-
- let max=Math.max(...data,1);
- let min=Math.min(...data,0);
-
- ctx.fillText(max.toFixed(1),2,10);
- ctx.fillText(min.toFixed(1),2,c.height-2);
-
- ctx.beginPath();
- ctx.strokeStyle=color;
-
- for(let i=0;i<data.length;i++){
-  let x=i*5;
-  let y=c.height-((data[i]-min)/(max-min||1))*c.height;
-  i?ctx.lineTo(x,y):ctx.moveTo(x,y);
- }
- ctx.stroke();
-}
-
-let cv=document.getElementById("vib");
-let ct=document.getElementById("temp");
-let ch=document.getElementById("hist");
-
-let xv=cv.getContext("2d");
-let xt=ct.getContext("2d");
-let xh=ch.getContext("2d");
-
-async function loop(){
- let r=await fetch('/data');
- let d=await r.json();
-
- vib.push(d.vibAtual);
- temp.push(d.tempAtual);
-
- if(vib.length > 200) vib.shift();
- if(temp.length > 200) temp.shift();
-
- vibHist=d.vibHist;
- tempHist=d.tempHist;
-
- draw(xv,cv,vib,"red");
- draw(xt,ct,temp,"blue");
- draw(xh,ch,vibHist,"green");
- draw(xh,ch,tempHist,"orange");
-
- setTimeout(loop,300);
-}
-
-loop();
-</script>
-
-</body>
-</html>
-)rawliteral";
-}
-
 // ===== SETUP =====
 void setup() {
+
+  LittleFS.begin();
   Serial.begin(115200);
 
   sensors.begin();
