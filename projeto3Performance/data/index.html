@@ -1,103 +1,173 @@
 <!DOCTYPE html>
-<html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ESP Monitor</title>
+<style>
+  body { font-family: sans-serif; margin: 16px; background: #f4f4f4; }
+  h2 { margin-bottom: 4px; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+  .tabs button {
+    padding: 8px 18px; border: none; border-radius: 6px;
+    background: #ddd; cursor: pointer; font-size: 14px;
+  }
+  .tabs button.ativo { background: #333; color: #fff; }
+  .card {
+    background: #fff; border-radius: 8px;
+    padding: 16px; margin-bottom: 16px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.1);
+  }
+  .valor-destaque {
+    font-size: 1.6em; font-weight: bold; color: #333;
+  }
+  .unidade {
+    font-size: 0.9em; color: #666; margin-left: 4px;
+  }
+  canvas { display: block; max-width: 100%; }
+  input { padding: 6px; margin: 4px 0; width: 220px; }
+  label { display: block; margin-top: 8px; font-size: 14px; }
+  .btn {
+    padding: 8px 18px; border: none; border-radius: 6px;
+    background: #333; color: #fff; cursor: pointer; margin-top: 10px;
+  }
+  #status-wifi { font-size: 13px; color: #555; margin-top: 6px; }
+</style>
+</head>
 <body>
 
 <h2>ESP Monitor</h2>
+<p style="font-size:12px;color:#888;margin-top:0">
+  Vibração medida em mm/s RMS — conforme ISO 10816
+</p>
 
-<button onclick="mostrar('monitor')">Monitoramento</button>
-<button onclick="mostrar('config')">Configurações</button>
-
-<div id="monitor">
-  <h3>Vibração</h3>
-  <div style="overflow-x:auto">
-    <canvas id="vib" height="150" style="min-width:1000px"></canvas>
-  </div>
-
-  <h3>Temperatura</h3>
-  <div style="overflow-x:auto">
-    <canvas id="temp" height="150" style="min-width:1000px"></canvas>
-  </div>
-
-  <h3>Histórico</h3>
-  <div style="overflow-x:auto">
-    <canvas id="hist" height="150" style="min-width:1000px"></canvas>
-  </div>
-
-  <br>
-  <a href="/csv">📥 Baixar CSV</a>
+<div class="tabs">
+  <button class="ativo" onclick="mostrar('monitor', this)">Monitoramento</button>
+  <button onclick="mostrar('config', this)">Configurações</button>
 </div>
 
+<!-- ===== MONITOR ===== -->
+<div id="monitor">
+
+  <div class="card">
+    <div style="margin-bottom:4px;color:#555">Vibração atual</div>
+    <span class="valor-destaque" id="vib-valor">—</span>
+    <span class="unidade">mm/s RMS</span>
+  </div>
+
+  <div class="card">
+    <div style="margin-bottom:4px;color:#555">Temperatura atual</div>
+    <span class="valor-destaque" id="temp-valor">—</span>
+    <span class="unidade">°C</span>
+  </div>
+
+  <div class="card">
+    <div style="margin-bottom:8px;color:#555">Vibração — mm/s RMS</div>
+    <div style="overflow-x:auto">
+      <canvas id="vib" height="160" style="min-width:600px"></canvas>
+    </div>
+  </div>
+
+  <div class="card">
+    <div style="margin-bottom:8px;color:#555">Temperatura — °C</div>
+    <div style="overflow-x:auto">
+      <canvas id="temp" height="160" style="min-width:600px"></canvas>
+    </div>
+  </div>
+
+  <div class="card">
+    <a href="/csv" class="btn">📥 Baixar CSV</a>
+  </div>
+
+</div>
+
+<!-- ===== CONFIG ===== -->
 <div id="config" style="display:none">
-  <h3>Configuração WiFi</h3>
-  <form action="/salvar">
-    SSID: <input name="s"><br><br>
-    Senha: <input name="p"><br><br>
-    <button type="submit">Salvar</button>
-  </form>
+  <div class="card">
+    <h3 style="margin-top:0">Configuração Wi-Fi</h3>
+    <label>SSID<input id="ssid" placeholder="Nome da rede"></label>
+    <label>Senha<input id="senha" type="password" placeholder="Senha"></label>
+    <button class="btn" onclick="salvarWifi()">Salvar e reconectar</button>
+    <div id="status-wifi"></div>
+  </div>
 </div>
 
 <script>
-function mostrar(sec){
-  document.getElementById("monitor").style.display="none";
-  document.getElementById("config").style.display="none";
-  document.getElementById(sec).style.display="block";
+// ===== NAVEGAÇÃO =====
+function mostrar(sec, btn){
+  document.getElementById('monitor').style.display = 'none';
+  document.getElementById('config').style.display  = 'none';
+  document.getElementById(sec).style.display = 'block';
+  document.querySelectorAll('.tabs button')
+    .forEach(b => b.classList.remove('ativo'));
+  if(btn) btn.classList.add('ativo');
 }
 
-let vib=[], temp=[];
+// ===== DADOS =====
+const MAX_PTS = 200;
+let vibDados  = [];
+let tempDados = [];
 
-function draw(ctx,c,data,color){
-  let w=Math.max(300,data.length*5);
-  c.width=w;
+// ===== DESENHO =====
+function desenhar(canvas, dados, corLinha){
+  const ctx = canvas.getContext('2d');
+  const W   = Math.max(600, dados.length * 5);
+  const H   = canvas.height;
+  canvas.width = W;
+  ctx.clearRect(0, 0, W, H);
 
-  ctx.clearRect(0,0,w,c.height);
+  if(dados.length === 0) return;
 
-  let max=Math.max(...data,1);
-  let min=Math.min(...data,0);
+  const maxVal = Math.max(...dados, 1);
+  const minVal = Math.min(...dados, 0);
+  const escala = v => H - ((v - minVal) / (maxVal - minVal || 1)) * H;
 
-  ctx.fillText(max.toFixed(1),2,10);
-  ctx.fillText(min.toFixed(1),2,c.height-2);
-
+  // Linha dos dados
   ctx.beginPath();
-  ctx.strokeStyle=color;
-
-  for(let i=0;i<data.length;i++){
-    let x=i*5;
-    let y=c.height-((data[i]-min)/(max-min||1))*c.height;
-    i?ctx.lineTo(x,y):ctx.moveTo(x,y);
-  }
+  ctx.strokeStyle = corLinha;
+  ctx.lineWidth   = 2;
+  dados.forEach((v, i) => {
+    const x = i * 5;
+    const y = escala(v);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
   ctx.stroke();
+
+  // Escala lateral
+  ctx.fillStyle = '#666';
+  ctx.font = '11px sans-serif';
+  ctx.fillText(maxVal.toFixed(2), 4, 11);
+  ctx.fillText(minVal.toFixed(2), 4, H - 3);
 }
 
-let cv=document.getElementById("vib");
-let ct=document.getElementById("temp");
-
-let xv=cv.getContext("2d");
-let xt=ct.getContext("2d");
-
+// ===== LOOP DE LEITURA =====
 let rodando = false;
 
 async function loop(){
   if(rodando) return;
   rodando = true;
 
-  try {
-    let r = await fetch('/data');
-    if(!r.ok) throw new Error(r.status);  
-    let d = await r.json();
+  try{
+    const r = await fetch('/data');
+    if(!r.ok) throw new Error(r.status);
+    const d = await r.json();
 
-    vib.push(d.vibAtual ?? 0);            
-    temp.push(d.tempAtual ?? 0);          
+    const vib  = d.vibAtual  ?? 0;
+    const temp = d.tempAtual ?? 0;
 
-    if(vib.length > 200) vib.shift();
-    if(temp.length > 200) temp.shift();
+    document.getElementById('vib-valor').textContent  = vib.toFixed(2);
+    document.getElementById('temp-valor').textContent = temp.toFixed(1);
 
-    draw(xv, cv, vib, "red");
-    draw(xt, ct, temp, "blue");
+    vibDados.push(vib);
+    tempDados.push(temp);
+    if(vibDados.length  > MAX_PTS) vibDados.shift();
+    if(tempDados.length > MAX_PTS) tempDados.shift();
 
-    // vibHist e tempHist REMOVIDOS
+    desenhar(document.getElementById('vib'),  vibDados,  '#c0392b');
+    desenhar(document.getElementById('temp'), tempDados, '#2980b9');
 
   } catch(e){
-    console.log("Erro:", e);
+    console.warn('Erro fetch:', e);
   }
 
   rodando = false;
@@ -105,7 +175,25 @@ async function loop(){
 }
 
 loop();
-</script>
 
+// ===== WIFI =====
+async function salvarWifi(){
+  const s  = document.getElementById('ssid').value.trim();
+  const p  = document.getElementById('senha').value;
+  const st = document.getElementById('status-wifi');
+
+  if(!s){ st.textContent = 'Informe o SSID.'; return; }
+
+  st.textContent = 'Salvando...';
+  try{
+    const r = await fetch(
+      `/salvar?s=${encodeURIComponent(s)}&p=${encodeURIComponent(p)}`
+    );
+    st.textContent = r.ok ? 'Salvo! Reconectando...' : 'Erro ao salvar.';
+  } catch(e){
+    st.textContent = 'Falha na requisição.';
+  }
+}
+</script>
 </body>
 </html>

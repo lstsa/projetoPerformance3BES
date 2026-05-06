@@ -243,6 +243,12 @@ void coletarAmostraFFT(){
 }
 
 void processarFFT(float tempAtual){
+  double somaQuad = 0;
+  for(int i = 0; i < SAMPLES; i++){
+    somaQuad += vReal[i] * vReal[i];
+  }
+  double acelRMS = sqrt(somaQuad / SAMPLES); // m/s²
+
   FFT.windowing(vReal, SAMPLES, FFT_WIN_TYP_HAMMING, FFT_FORWARD);
   FFT.compute(vReal, vImag, SAMPLES, FFT_FORWARD);
   FFT.complexToMagnitude(vReal, vImag, SAMPLES);
@@ -263,8 +269,10 @@ void processarFFT(float tempAtual){
     return;
   }
 
+  double velRMS = (acelRMS / (2.0 * PI * freq)) * 1000.0;
+
   DadoSensor dado;
-  dado.vibracao   = (pico / (2 * PI * freq)) * 1000;
+  dado.vibracao    = velRMS;   
   dado.temperatura = tempAtual;
   dado.timestamp   = millis();
 
@@ -475,10 +483,10 @@ void setup(){
   }
   Serial.println("ADXL345 OK");
 
-// timer de interrupção — 100Hz
-  timer = timerBegin(100);                    // frequência diretamente em Hz
-  timerAttachInterrupt(timer, &onTimer);      // sem o terceiro argumento
-  timerAlarm(timer, 1000000 / 100, true, 0); // 100Hz = alarme a cada 10ms
+// timer de interrupção
+  timer = timerBegin(1000000);                    
+  timerAttachInterrupt(timer, &onTimer);      
+  timerAlarm(timer, 10000, true, 0); 
 
   carregarWiFi();
 
