@@ -1,183 +1,187 @@
+// ===== DEFINES =====
 #define FFT_SPEED_OVER_PRECISION
+#define LED_PIN 2
+#define ONE_WIRE_BUS 4
+#define SAMPLES 64
+#define SAMPLING_FREQUENCY 100
+#define MAX_HISTORICO 288
 
 
-// ==== mutex ====
-
-SemaphoreHandle_t dataMutex;
-
-//===== maquina wifiState ======
-
-enum WifiState {
-  AP_MODE,
-  CONNECTING,
-  CONNECTED
-};
-
-WifiState wifiState = AP_MODE;
-
-// ======= bibliotecas ======
-
+// ===== INCLUDES =====
 #include <WiFi.h>
 #include <ESPAsyncWebServer.h>
 #include <AsyncTCP.h>
+#include <LittleFS.h>
 #include <Preferences.h>
-#define LED_PIN 2
-
 #include <OneWire.h>
 #include <DallasTemperature.h>
-
 #include <Wire.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_ADXL345_U.h>
-
 #include <arduinoFFT.h>
+#include "soc/soc.h"
+#include "soc/rtc_cntl_reg.h"
 
-#include <LittleFS.h>
 
-#include "soc/soc.h"           // ADICIONE no topo do arquivo, junto dos outros includes
-#include "soc/rtc_cntl_reg.h"  // ADICIONE no topo do arquivo, junto dos outros includes
 
-// ===== WIFI CONFIG =====
-bool modoAP = false;
+// ===== ESTRUTURA DE DADOS =====
+typedef struct {
+  float vibracao;
+  float temperatura;
+  unsigned long timestamp;
+} DadoSensor;
 
-String ssidSalvo = "";
-String senhaSalva = "";
 
-unsigned long wifiStart = 0;
-const unsigned long wifiTimeout = 10000;
+// ===== FILAS =====
+QueueHandle_t filaProcessamento;
+QueueHandle_t filaLeitura;
 
-bool reiniciar = false;
-unsigned long tempoReinicio = 0;
 
+// ===== MUTEXES =====
+SemaphoreHandle_t fsMutex;
+
+
+// ===== SERVIDOR =====
 AsyncWebServer server(80);
-Preferences preferences;
 
-// ===== TEMP =====
-#define ONE_WIRE_BUS 4
+
+// ===== SENSORES =====
 OneWire oneWire(ONE_WIRE_BUS);
 DallasTemperature sensors(&oneWire);
-
-// ===== ACCEL =====
 Adafruit_ADXL345_Unified accel = Adafruit_ADXL345_Unified();
 
-// ===== FFT =====
-#define SAMPLES 64
-#define SAMPLING_FREQUENCY 100
-static char csvBuffer[4096];
-static char jsonBuffer[256];
 
+// ===== FFT =====
 double vReal[SAMPLES];
 double vImag[SAMPLES];
-
 ArduinoFFT<double> FFT = ArduinoFFT<double>();
-
-unsigned long lastSampleMicros = 0;
 int sampleIndex = 0;
 bool fftReady = false;
 
-// ===== TEMP CONTROL =====
-unsigned long ultimoTempRequest = 0;
-bool aguardandoTemp = false;
-float tempAtual = 0;
 
-// ===== VIB =====
-float vibAtual = 0;
+// ===== TIMER DE INTERRUPÇÃO =====
+hw_timer_t *timer = NULL;
+portMUX_TYPE timerMux = portMUX_INITIALIZER_UNLOCKED;
+volatile bool coletarAmostra = false;
 
-// ===== FLASH =====
-#define MAX 288
-float vibDados[MAX];
-float tempDados[MAX];
-int indice = 0;
-bool cheio = false;
-
-// ===== TEMPO =====
-unsigned long ultimoTempoMedia = 0;
-const unsigned long intervaloMedia = 300000;
 
 // ===== GRAVIDADE =====
 float alpha = 0.9;
 float gravX = 0, gravY = 0, gravZ = 0;
 
-// ================= WIFI =================
+
+// ===== TEMPERATURA =====
+unsigned long ultimoTempRequest = 0;
+bool aguardandoTemp = false;
+
+
+// ===== BUFFERS HTTP =====
+static char jsonBuffer[128];
+static char csvBuffer[8192];
+
+
+// ===== WIFI CONFIG =====
+String ssidSalvo = "";
+String senhaSalva = "";
+unsigned long wifiStart = 0;
+const unsigned long wifiTimeout = 10000;
+
+
+// ===== ESTADO WIFI =====
+enum WifiState { AP_MODE, CONNECTING, CONNECTED };
+WifiState wifiState = AP_MODE;
+
+
+// ===== INTERRUPÇÃO DE HARDWARE =====
+void IRAM_ATTR onTimer(){
+  portENTER_CRITICAL_ISR(&timerMux);
+  coletarAmostra = true;
+  portEXIT_CRITICAL_ISR(&timerMux);
+}
+
+
+// ===== WIFI =====
 void salvarWiFi(String ssid, String senha){
-  preferences.begin("wifi", false);
-  preferences.putString("ssid", ssid);
-  preferences.putString("senha", senha);
-  preferences.end();
+  if(xSemaphoreTake(fsMutex, pdMS_TO_TICKS(500))){
+    File f = LittleFS.open("/config.txt", "w");
+    if(f){
+      f.println(ssid);
+      f.println(senha);
+      f.close();
+    }
+    xSemaphoreGive(fsMutex);
+  }
 }
 
 void carregarWiFi(){
-  preferences.begin("wifi", true);
-  ssidSalvo = preferences.getString("ssid", "");
-  senhaSalva = preferences.getString("senha", "");
-  preferences.end();
+  if(xSemaphoreTake(fsMutex, pdMS_TO_TICKS(500))){
+    File f = LittleFS.open("/config.txt", "r");
+    if(f){
+      ssidSalvo  = f.readStringUntil('\n'); ssidSalvo.trim();
+      senhaSalva = f.readStringUntil('\n'); senhaSalva.trim();
+      f.close();
+    }
+    xSemaphoreGive(fsMutex);
+  }
 }
 
 void iniciarAP(){
   WiFi.mode(WIFI_AP);
   WiFi.softAP("ESP-CONFIG", "12345678");
-
-  modoAP = true;
   wifiState = AP_MODE;
-
-  Serial.println("\n=== MODO AP ATIVO ===");
-  Serial.print("IP AP: ");
+  Serial.println("=== MODO AP ATIVO ===");
   Serial.println(WiFi.softAPIP());
 }
 
 void iniciarSTA(){
   WiFi.mode(WIFI_STA);
+  WiFi.setSleep(true);
   if(senhaSalva == ""){
     WiFi.begin(ssidSalvo.c_str());
   } else {
     WiFi.begin(ssidSalvo.c_str(), senhaSalva.c_str());
   }
-
   wifiStart = millis();
-  modoAP = false;
   wifiState = CONNECTING;
-
-  Serial.println("\n=== CONECTANDO WIFI ===");
-  Serial.println("SSID: " + ssidSalvo);
+  Serial.println("=== CONECTANDO ===");
+  Serial.println(ssidSalvo);
 }
-void gerenciarWiFi(){
 
+void gerenciarWiFi(){
   wl_status_t status = WiFi.status();
 
   switch(wifiState){
 
-    // ================= AP =================
     case AP_MODE:
       break;
 
-    // ================= CONECTANDO =================
     case CONNECTING:
-
       if(status == WL_CONNECTED){
         wifiState = CONNECTED;
-        modoAP = false;
-
-        Serial.println("\n=== WIFI CONECTADO ===");
-        Serial.print("IP: ");
+        Serial.println("=== WIFI CONECTADO ===");
         Serial.println(WiFi.localIP());
-
       } else if(millis() - wifiStart > wifiTimeout){
-
-        Serial.println("\n=== FALHA AO CONECTAR ===");
+        Serial.println("=== FALHA AO CONECTAR ===");
         WiFi.disconnect();
         iniciarAP();
       }
-
       break;
 
-    // ================= CONECTADO =================
     case CONNECTED:
-
       if(status != WL_CONNECTED){
-        Serial.println("\n=== WIFI DESCONECTADO ===");
-        iniciarAP();
+        static unsigned long inicioQueda = 0;
+        if(inicioQueda == 0){
+          inicioQueda = millis();
+          Serial.println("WiFi instavel, aguardando...");
+        } else if(millis() - inicioQueda > 5000){
+          inicioQueda = 0;
+          Serial.println("=== WIFI DESCONECTADO ===");
+          iniciarAP();
+        }
+      } else {
+        static unsigned long inicioQueda = 0;
+        inicioQueda = 0;
       }
-
       break;
   }
 }
@@ -187,99 +191,58 @@ void handleSalvar(AsyncWebServerRequest *request){
   String p = request->hasParam("p") ? request->getParam("p")->value() : "";
 
   if(s == ""){
-    request->send(400, "text/plain", "SSID inválido");
+    request->send(400, "text/plain", "SSID invalido");
     return;
   }
 
-  Serial.println("=== NOVA CONFIG WIFI ===");
-  Serial.println("SSID: " + s);
-  Serial.println("Senha: " + p);
+  salvarWiFi(s, p);
+  ssidSalvo  = s;
+  senhaSalva = p;
 
-  salvarWiFi(s,p);
-
-  request->send(200,"text/html","Salvo! Reiniciando...");
-
-  reiniciar = true;
-  tempoReinicio = millis();
+  request->send(200, "text/html", "Salvo! Reconectando...");
+  iniciarSTA();
 }
-void scanWiFi(){
-  Serial.println("Escaneando redes...");
 
-  int n = WiFi.scanNetworks();
 
-  if(n == 0){
-    Serial.println("Nenhuma rede encontrada");
-  } else {
-    for(int i=0;i<n;i++){
-      Serial.print(i+1);
-      Serial.print(": ");
-      Serial.println(WiFi.SSID(i));
-    }
-  }
-}
-// ================= CORE =================
+// ===== SENSORES =====
 void removerGravidade(float x, float y, float z,
-                      float &linX, float &linY, float &linZ) {
+                      float &linX, float &linY, float &linZ){
   gravX = alpha * gravX + (1 - alpha) * x;
   gravY = alpha * gravY + (1 - alpha) * y;
   gravZ = alpha * gravZ + (1 - alpha) * z;
-
   linX = x - gravX;
   linY = y - gravY;
   linZ = z - gravZ;
 }
 
-void salvarFlash() {
-  preferences.begin("app", false);
-  preferences.putBytes("vib", vibDados, sizeof(vibDados));
-  preferences.putBytes("temp", tempDados, sizeof(tempDados));
-  preferences.putInt("indice", indice);
-  preferences.putBool("cheio", cheio);
-  preferences.end();
-}
+void coletarAmostraFFT(){
+  portENTER_CRITICAL(&timerMux);
+  bool deve = coletarAmostra;
+  coletarAmostra = false;
+  portEXIT_CRITICAL(&timerMux);
 
-void carregarFlash() {
-  preferences.begin("app", true);
+  if(!deve) return;
 
-  if (preferences.isKey("vib")) {
-    preferences.getBytes("vib", vibDados, sizeof(vibDados));
-    preferences.getBytes("temp", tempDados, sizeof(tempDados));
-    indice = preferences.getInt("indice", 0);
-    cheio = preferences.getBool("cheio", false);
-  }
+  sensors_event_t event;
+  if(!accel.getEvent(&event)) return;
 
-  preferences.end();
-}
+  float linX, linY, linZ;
+  removerGravidade(event.acceleration.x,
+                   event.acceleration.y,
+                   event.acceleration.z,
+                   linX, linY, linZ);
 
-// ===== FFT =====
-void coletarAmostraFFT() {
-  unsigned long periodo = 1000000 / SAMPLING_FREQUENCY;
+  vReal[sampleIndex] = sqrt(linX*linX + linY*linY + linZ*linZ);
+  vImag[sampleIndex] = 0;
+  sampleIndex++;
 
-  if (micros() - lastSampleMicros >= periodo) {
-    lastSampleMicros = micros();
-
-    sensors_event_t event;
-    accel.getEvent(&event);
-
-    float linX, linY, linZ;
-    removerGravidade(event.acceleration.x,
-                     event.acceleration.y,
-                     event.acceleration.z,
-                     linX, linY, linZ);
-
-    vReal[sampleIndex] = sqrt(linX*linX + linY*linY + linZ*linZ);
-    vImag[sampleIndex] = 0;
-
-    sampleIndex++;
-
-    if (sampleIndex >= SAMPLES) {
-      sampleIndex = 0;
-      fftReady = true;
-    }
+  if(sampleIndex >= SAMPLES){
+    sampleIndex = 0;
+    fftReady = true;
   }
 }
 
-void processarFFT() {
+void processarFFT(float tempAtual){
   FFT.windowing(vReal, SAMPLES, FFT_WIN_TYP_HAMMING, FFT_FORWARD);
   FFT.compute(vReal, vImag, SAMPLES, FFT_FORWARD);
   FFT.complexToMagnitude(vReal, vImag, SAMPLES);
@@ -287,254 +250,218 @@ void processarFFT() {
   double pico = 0;
   int idx = 0;
 
-  for (int i = 1; i < SAMPLES / 2; i++) {
-    if (vReal[i] > pico) {
+  for(int i = 1; i < SAMPLES / 2; i++){
+    if(vReal[i] > pico){
       pico = vReal[i];
       idx = i;
     }
   }
 
-  double freq = (idx * SAMPLING_FREQUENCY) / SAMPLES;
-
-  if (freq > 1) {
-    if(xSemaphoreTake(dataMutex, portMAX_DELAY)){
-      vibAtual = (pico / (2 * PI * freq)) * 1000;
-      xSemaphoreGive(dataMutex);
-    }
+  double freq = (idx * SAMPLING_FREQUENCY) / (double)SAMPLES;
+  if(freq <= 1){
+    fftReady = false;
+    return;
   }
+
+  DadoSensor dado;
+  dado.vibracao   = (pico / (2 * PI * freq)) * 1000;
+  dado.temperatura = tempAtual;
+  dado.timestamp   = millis();
+
+  xQueueSend(filaProcessamento, &dado, 0);
+  xQueueOverwrite(filaLeitura, &dado);
 
   fftReady = false;
 }
 
-// ===== TEMP =====
-void atualizarTemperatura() {
-  if (!aguardandoTemp && millis() - ultimoTempRequest >= 1000) {
+void atualizarTemperatura(float &tempAtual){
+  if(!aguardandoTemp && millis() - ultimoTempRequest >= 1000){
     sensors.requestTemperatures();
     aguardandoTemp = true;
     ultimoTempRequest = millis();
   }
 
-  if (aguardandoTemp && millis() - ultimoTempRequest >= 750) {
+  if(aguardandoTemp && millis() - ultimoTempRequest >= 750){
     float t = sensors.getTempCByIndex(0);
-    if (t != -127 && t > -50 && t < 150) {
-      if(xSemaphoreTake(dataMutex, portMAX_DELAY)){
-        tempAtual = t;
-        xSemaphoreGive(dataMutex);
-      }
+    if(t != -127 && t > -50 && t < 150){
+      tempAtual = t;
     }
     aguardandoTemp = false;
   }
 }
 
-// ===== BUFFER =====
-void adicionarDado(float vib, float temp) {
-  vibDados[indice] = vib;
-  tempDados[indice] = temp;
 
-  indice++;
-  if (indice >= MAX) {
-    indice = 0;
-    cheio = true;
+// ===== ARMAZENAMENTO =====
+void salvarDado(DadoSensor &dado){
+  if(xSemaphoreTake(fsMutex, pdMS_TO_TICKS(500))){
+
+    int linhas = 0;
+    File f = LittleFS.open("/dados.csv", "r");
+    if(f){
+      while(f.available()){
+        if(f.read() == '\n') linhas++;
+      }
+      f.close();
+    }
+
+    if(linhas >= MAX_HISTORICO){
+      File fLeitura = LittleFS.open("/dados.csv", "r");
+      File fTemp    = LittleFS.open("/temp.csv", "w");
+      if(fLeitura && fTemp){
+        fLeitura.readStringUntil('\n'); // descarta linha mais antiga
+        while(fLeitura.available()){
+          fTemp.write(fLeitura.read());
+        }
+      }
+      if(fLeitura) fLeitura.close();
+      if(fTemp)    fTemp.close();
+      LittleFS.remove("/dados.csv");
+      LittleFS.rename("/temp.csv", "/dados.csv");
+    }
+
+    File fa = LittleFS.open("/dados.csv", "a");
+    if(fa){
+      fa.printf("%.2f,%.2f,%lu\n",
+                dado.vibracao,
+                dado.temperatura,
+                dado.timestamp);
+      fa.close();
+    }
+
+    xSemaphoreGive(fsMutex);
   }
 }
 
-// ===== CSV =====
 String gerarCSV(){
-  int len = 0;
   memset(csvBuffer, 0, sizeof(csvBuffer));
-  len += snprintf(csvBuffer + len, sizeof(csvBuffer) - len,  // CORRIGIDO
-                  "Vibracao(mm/s),Temperatura\n");
+  int len = 0;
 
-  float vibLocal[MAX];
-  float tempLocal[MAX];
-  int indiceLocal;
-  bool cheioLocal;
+  len += snprintf(csvBuffer + len, sizeof(csvBuffer) - len,
+                  "Vibracao(mm/s),Temperatura,Timestamp\n");
 
-  if(xSemaphoreTake(dataMutex, portMAX_DELAY)){
-    memcpy(vibLocal, vibDados, sizeof(vibDados));
-    memcpy(tempLocal, tempDados, sizeof(tempDados));
-    indiceLocal = indice;
-    cheioLocal = cheio;
-    xSemaphoreGive(dataMutex);
-  }
-
-  for(int i = 0; i < indiceLocal; i++){
-    len += snprintf(csvBuffer + len, sizeof(csvBuffer) - len,  // CORRIGIDO
-                    "%.2f,%.2f\n",
-                    vibLocal[i], tempLocal[i]);
+  if(xSemaphoreTake(fsMutex, pdMS_TO_TICKS(500))){
+    File f = LittleFS.open("/dados.csv", "r");
+    if(f){
+      while(f.available() && len < (int)sizeof(csvBuffer) - 32){
+        csvBuffer[len++] = (char)f.read();
+      }
+      f.close();
+    }
+    xSemaphoreGive(fsMutex);
   }
 
   return String(csvBuffer);
 }
 
-
-// ===== JSON =====
-String gerarJSON() {
-  float vib, temp;
-
-  if(xSemaphoreTake(dataMutex, portMAX_DELAY)){
-    vib = vibAtual;
-    temp = tempAtual;
-    xSemaphoreGive(dataMutex);
-  }
+String gerarJSON(){
+  DadoSensor dado = {0.0f, 0.0f, 0};
+  xQueuePeek(filaLeitura, &dado, 0);
 
   snprintf(jsonBuffer, sizeof(jsonBuffer),
     "{\"vibAtual\":%.2f,\"tempAtual\":%.2f}",
-    vib, temp
-  );
+    dado.vibracao, dado.temperatura);
 
   return String(jsonBuffer);
 }
 
-//====== led ======
 
-void atualizarLED() {
+// ===== LED =====
+void atualizarLED(){
   static unsigned long lastBlink = 0;
   static bool estado = false;
 
   switch(wifiState){
-
     case AP_MODE:
-      if (millis() - lastBlink > 1000) {
+      if(millis() - lastBlink > 1000){
         estado = !estado;
         digitalWrite(LED_PIN, estado);
         lastBlink = millis();
       }
       break;
-
     case CONNECTING:
-      if (millis() - lastBlink > 200) {
+      if(millis() - lastBlink > 200){
         estado = !estado;
         digitalWrite(LED_PIN, estado);
         lastBlink = millis();
       }
       break;
-
     case CONNECTED:
       digitalWrite(LED_PIN, HIGH);
       break;
   }
 }
 
-//====== tasks =====
-
-  void gravarHeartbeat(const char* origem){
-    preferences.begin("diag", false);
-    preferences.putString("hb", origem);
-    preferences.end();
-  }
-  
-void taskWiFi(void *pvParameters){
-  static unsigned long lastHeap = 0;
-
+// ===== TASKS =====
+void taskComunicacao(void *pvParameters){
   while(true){
     gerenciarWiFi();
     atualizarLED();
-
-    if(millis() - lastHeap > 5000){
-      lastHeap = millis();
-      debugHeap();
-      Serial.print("Stack WiFi: ");                        // ADICIONADO
-      Serial.println(uxTaskGetStackHighWaterMark(NULL));   // ADICIONADO
-      gravarHeartbeat("taskWiFi");  // ADICIONADO
-    }
-
     vTaskDelay(100 / portTICK_PERIOD_MS);
   }
 }
 
 void taskSensores(void *pvParameters){
-  static unsigned long lastStack = 0;                      // ADICIONADO
+  float tempLocal = 0.0f;
 
   while(true){
     coletarAmostraFFT();
 
-    if (fftReady) processarFFT();
+    if(fftReady) processarFFT(tempLocal);
 
-    atualizarTemperatura();
+    atualizarTemperatura(tempLocal);
 
-    if(millis() - lastStack > 5000){                       // ADICIONADO
-      lastStack = millis();                                // ADICIONADO
-      Serial.print("Stack Sensores: ");                   // ADICIONADO
-      Serial.println(uxTaskGetStackHighWaterMark(NULL));   // ADICIONADO
-      gravarHeartbeat("taskSensores");  // ADICIONADO
-    }
-
-    vTaskDelay(10 / portTICK_PERIOD_MS);  // era 5, agora 10
+    vTaskDelay(1 / portTICK_PERIOD_MS);
   }
 }
 
 void taskArmazenamento(void *pvParameters){
-  static unsigned long lastStack = 0;                      // ADICIONADO
+  DadoSensor dado;
+  DadoSensor acumulado = {0.0f, 0.0f, 0};
+  int contagem = 0;
+  unsigned long ultimoSalvo = millis();
 
   while(true){
-    if (millis() - ultimoTempoMedia >= intervaloMedia) {
-      ultimoTempoMedia = millis();
-
-      float vib, temp;
-
-      if(xSemaphoreTake(dataMutex, portMAX_DELAY)){
-        vib = vibAtual;
-        temp = tempAtual;
-        adicionarDado(vib, temp);
-        xSemaphoreGive(dataMutex);
-      }
-
-      salvarFlash();
+    if(xQueueReceive(filaProcessamento, &dado, pdMS_TO_TICKS(1000))){
+      acumulado.vibracao    += dado.vibracao;
+      acumulado.temperatura += dado.temperatura;
+      acumulado.timestamp    = dado.timestamp;
+      contagem++;
     }
 
-    if(millis() - lastStack > 5000){                       // ADICIONADO
-      lastStack = millis();                                // ADICIONADO
-      Serial.print("Stack Armazenamento: ");              // ADICIONADO
-      Serial.println(uxTaskGetStackHighWaterMark(NULL));   // ADICIONADO
-      gravarHeartbeat("taskArmazenamento");  // ADICIONADO
+    if(millis() - ultimoSalvo >= 300000 && contagem > 0){
+      DadoSensor media;
+      media.vibracao    = acumulado.vibracao    / contagem;
+      media.temperatura = acumulado.temperatura / contagem;
+      media.timestamp   = acumulado.timestamp;
+
+      salvarDado(media);
+
+      acumulado = {0.0f, 0.0f, 0};
+      contagem  = 0;
+      ultimoSalvo = millis();
     }
 
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    vTaskDelay(1 / portTICK_PERIOD_MS);
   }
 }
-//=== debug heap ===
-void debugHeap(){
-  Serial.print("Heap livre: ");
-  Serial.println(ESP.getFreeHeap());
-}
 
-void setup() {
+
+// ===== SETUP =====
+void setup(){
   Serial.begin(115200);
   delay(500);
 
-  // lê e salva ANTES de qualquer outro preferences.begin()
-  esp_reset_reason_t motivo = esp_reset_reason();
-
-  preferences.begin("diag", false);
-  String ultimoCrash = preferences.getString("crash", "nenhum");
-  String ultimoHeartbeat = preferences.getString("hb", "nenhum");  // ADICIONADO
-  Serial.print("Ultimo crash salvo: ");
-  Serial.println(ultimoCrash);
-  Serial.print("Ultimo heartbeat: ");                               // ADICIONADO
-  Serial.println(ultimoHeartbeat);                                  // ADICIONADO
-
-  // salva o motivo atual para o próximo boot
-  switch(motivo){
-    case ESP_RST_POWERON:   preferences.putString("crash", "Power on");        break;
-    case ESP_RST_SW:        preferences.putString("crash", "Software");        break;
-    case ESP_RST_PANIC:     preferences.putString("crash", "Panic/Exception"); break;
-    case ESP_RST_INT_WDT:   preferences.putString("crash", "WDT Interrupcao");break;
-    case ESP_RST_TASK_WDT:  preferences.putString("crash", "WDT Task");       break;
-    case ESP_RST_WDT:       preferences.putString("crash", "WDT Outro");      break;
-    case ESP_RST_BROWNOUT:  preferences.putString("crash", "Brownout");       break;
-    default:                preferences.putString("crash", "Desconhecido");   break;
-  }
-  preferences.end(); // fecha ANTES de qualquer outro begin()
-
   WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
-
-  dataMutex = xSemaphoreCreateMutex();
 
   pinMode(LED_PIN, OUTPUT);
 
+  // recursos compartilhados
+  filaProcessamento = xQueueCreate(20, sizeof(DadoSensor));
+  filaLeitura       = xQueueCreate(1,  sizeof(DadoSensor));
+  fsMutex           = xSemaphoreCreateMutex();
+
   if(!LittleFS.begin(true)){
-    Serial.println("Erro ao montar LittleFS");
+    Serial.println("ERRO: LittleFS falhou");
   } else {
     Serial.println("LittleFS OK");
   }
@@ -542,9 +469,17 @@ void setup() {
   sensors.begin();
   sensors.setWaitForConversion(false);
 
-  accel.begin();
+  if(!accel.begin()){
+    Serial.println("ERRO: ADXL345 nao encontrado");
+    while(true){ vTaskDelay(100 / portTICK_PERIOD_MS); }
+  }
+  Serial.println("ADXL345 OK");
 
-  carregarFlash();
+// timer de interrupção — 100Hz
+  timer = timerBegin(100);                    // frequência diretamente em Hz
+  timerAttachInterrupt(timer, &onTimer);      // sem o terceiro argumento
+  timerAlarm(timer, 1000000 / 100, true, 0); // 100Hz = alarme a cada 10ms
+
   carregarWiFi();
 
   if(ssidSalvo != ""){
@@ -561,20 +496,14 @@ void setup() {
   server.on("/csv", HTTP_GET, [](AsyncWebServerRequest *request){
     request->send(200, "text/csv", gerarCSV());
   });
-
   server.begin();
+
   Serial.println("=== SISTEMA INICIADO ===");
-  Serial.println("SSID salvo: " + ssidSalvo);
 
-
-  xTaskCreatePinnedToCore(taskWiFi, "Task WiFi", 4096, NULL, 1, NULL, 0);
-  xTaskCreatePinnedToCore(taskSensores, "Task Sensores", 6144, NULL, 1, NULL, 1);
-  xTaskCreatePinnedToCore(taskArmazenamento, "Task Armazenamento", 4096, NULL, 1, NULL, 1);
+  xTaskCreatePinnedToCore(taskComunicacao,   "Comunicacao",   4096, NULL, 1, NULL, 0);
+  xTaskCreatePinnedToCore(taskSensores,      "Sensores",      6144, NULL, 2, NULL, 1);
+  xTaskCreatePinnedToCore(taskArmazenamento, "Armazenamento", 4096, NULL, 1, NULL, 1);
 }
 
 // ===== LOOP =====
-void loop() {
-  if(reiniciar && millis() - tempoReinicio > 1000){
-    ESP.restart();
-  }
-}
+void loop(){}
