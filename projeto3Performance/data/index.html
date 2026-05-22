@@ -61,17 +61,31 @@
     <span class="unidade">°C</span>
   </div>
 
-  <div class="card">
-    <div style="margin-bottom:8px;color:#555">Vibração — mm/s RMS</div>
+    <div class="card">
+    <div style="margin-bottom:8px;color:#555">Vibração — tempo real (últimos 5 min) — mm/s RMS</div>
     <div style="overflow-x:auto">
       <canvas id="vib" height="160" style="min-width:600px"></canvas>
     </div>
   </div>
 
   <div class="card">
-    <div style="margin-bottom:8px;color:#555">Temperatura — °C</div>
+    <div style="margin-bottom:8px;color:#555">Temperatura — tempo real (últimos 5 min) — °C</div>
     <div style="overflow-x:auto">
       <canvas id="temp" height="160" style="min-width:600px"></canvas>
+    </div>
+  </div>
+
+  <div class="card">
+    <div style="margin-bottom:8px;color:#555">Vibração — histórico 24h (média a cada 5 min) — mm/s RMS</div>
+    <div style="overflow-x:auto">
+      <canvas id="vibHist" height="160" style="min-width:600px"></canvas>
+    </div>
+  </div>
+
+  <div class="card">
+    <div style="margin-bottom:8px;color:#555">Temperatura — histórico 24h (média a cada 5 min) — °C</div>
+    <div style="overflow-x:auto">
+      <canvas id="tempHist" height="160" style="min-width:600px"></canvas>
     </div>
   </div>
 
@@ -104,9 +118,11 @@ function mostrar(sec, btn){
 }
 
 // ===== DADOS =====
-const MAX_PTS = 200;
+const MAX_PTS = 150;
 let vibDados  = [];
 let tempDados = [];
+let vibHistDados  = [];
+let tempHistDados = [];
 
 // ===== DESENHO =====
 function desenhar(canvas, dados, corLinha){
@@ -140,7 +156,7 @@ function desenhar(canvas, dados, corLinha){
   ctx.fillText(minVal.toFixed(2), 4, H - 3);
 }
 
-// ===== LOOP DE LEITURA =====
+// ===== LOOP TEMPO REAL (2s) =====
 let rodando = false;
 
 async function loop(){
@@ -167,14 +183,35 @@ async function loop(){
     desenhar(document.getElementById('temp'), tempDados, '#2980b9');
 
   } catch(e){
-    console.warn('Erro fetch:', e);
+    console.warn('Erro fetch /data:', e);
   }
 
   rodando = false;
   setTimeout(loop, 2000);
 }
 
+// ===== LOOP HISTÓRICO (30s) =====
+async function loopHistorico(){
+  try{
+    const r = await fetch('/historico');
+    if(!r.ok) throw new Error(r.status);
+    const d = await r.json();
+
+    vibHistDados  = d.vib  ?? [];
+    tempHistDados = d.temp ?? [];
+
+    desenhar(document.getElementById('vibHist'),  vibHistDados,  '#922b21');
+    desenhar(document.getElementById('tempHist'), tempHistDados, '#1a5276');
+
+  } catch(e){
+    console.warn('Erro fetch /historico:', e);
+  }
+
+  setTimeout(loopHistorico, 30000);
+}
+
 loop();
+loopHistorico();
 
 // ===== WIFI =====
 async function salvarWifi(){

@@ -31,6 +31,18 @@ typedef struct {
   unsigned long timestamp;
 } DadoSensor;
 
+typedef struct {
+  float vibMedia;
+  float tempMedia;
+  unsigned long timestamp;
+} DadoHistorico;
+
+#define MAX_HISTORICO_RAM 288
+DadoHistorico historicoRAM[MAX_HISTORICO_RAM];
+int historicoCount = 0;      // quantos slots preenchidos
+int historicoInicio = 0;     // índice do mais antigo (buffer circular)
+SemaphoreHandle_t historicoMutex;
+
 
 // ===== FILAS =====
 QueueHandle_t filaProcessamento;
@@ -300,7 +312,7 @@ void atualizarTemperatura(float &tempAtual){
 
 
 // ===== ARMAZENAMENTO =====
-void salvarDado(DadoSensor &dado){
+void salvarDado(DadoHistorico &dado){
   if(xSemaphoreTake(fsMutex, pdMS_TO_TICKS(500))){
 
     int linhas = 0;
@@ -316,7 +328,7 @@ void salvarDado(DadoSensor &dado){
       File fLeitura = LittleFS.open("/dados.csv", "r");
       File fTemp    = LittleFS.open("/temp.csv", "w");
       if(fLeitura && fTemp){
-        fLeitura.readStringUntil('\n'); // descarta linha mais antiga
+        fLeitura.readStringUntil('\n');
         while(fLeitura.available()){
           fTemp.write(fLeitura.read());
         }
@@ -330,8 +342,8 @@ void salvarDado(DadoSensor &dado){
     File fa = LittleFS.open("/dados.csv", "a");
     if(fa){
       fa.printf("%.2f,%.2f,%lu\n",
-                dado.vibracao,
-                dado.temperatura,
+                dado.vibMedia,
+                dado.tempMedia,
                 dado.timestamp);
       fa.close();
     }
@@ -344,18 +356,54 @@ String gerarCSV(){
   memset(csvBuffer, 0, sizeof(csvBuffer));
   int len = 0;
 
+  // cabeçalho do relatório
   len += snprintf(csvBuffer + len, sizeof(csvBuffer) - len,
-                  "Vibracao(mm/s),Temperatura,Timestamp\n");
+    "# Relatorio ESP Monitor — ISO 10816\n"
+    "# Intervalo de amostragem: 5 minutos\n"
+    "# Maximo de registros: 288 (24 horas)\n"
+    "#\n"
+    "Timestamp(ms),Vibracao_media(mm/s RMS),Temperatura_media(C)\n");
 
-  if(xSemaphoreTake(fsMutex, pdMS_TO_TICKS(500))){
-    File f = LittleFS.open("/dados.csv", "r");
-    if(f){
-      while(f.available() && len < (int)sizeof(csvBuffer) - 32){
-        csvBuffer[len++] = (char)f.read();
-      }
-      f.close();
+  float vibMax  = -1e9, vibMin  =  1e9, vibSoma  = 0;
+  float tempMax = -1e9, tempMin =  1e9, tempSoma = 0;
+  int   total   = 0;
+
+  if(xSemaphoreTake(historicoMutex, pdMS_TO_TICKS(500))){
+    for(int i = 0; i < historicoCount; i++){
+      int idx = (historicoInicio + i) % MAX_HISTORICO_RAM;
+      DadoHistorico &h = historicoRAM[idx];
+
+      len += snprintf(csvBuffer + len, sizeof(csvBuffer) - len,
+                "%.2f,%.2f,%lu\n",
+                h.vibMedia, h.tempMedia, h.timestamp);
+
+      // acumula estatísticas
+      if(h.vibMedia  > vibMax)  vibMax  = h.vibMedia;
+      if(h.vibMedia  < vibMin)  vibMin  = h.vibMedia;
+      if(h.tempMedia > tempMax) tempMax = h.tempMedia;
+      if(h.tempMedia < tempMin) tempMin = h.tempMedia;
+      vibSoma  += h.vibMedia;
+      tempSoma += h.tempMedia;
+      total++;
     }
-    xSemaphoreGive(fsMutex);
+    xSemaphoreGive(historicoMutex);
+  }
+
+  // bloco de estatísticas no rodapé
+  if(total > 0){
+    len += snprintf(csvBuffer + len, sizeof(csvBuffer) - len,
+      "#\n"
+      "# === ESTATISTICAS (ultimas 24h) ===\n"
+      "# Vibração maxima: %.2f mm/s RMS\n"
+      "# Vibração minima: %.2f mm/s RMS\n"
+      "# Vibração media:  %.2f mm/s RMS\n"
+      "# Temperatura maxima: %.1f C\n"
+      "# Temperatura minima: %.1f C\n"
+      "# Temperatura media:  %.1f C\n"
+      "# Total de registros: %d\n",
+      vibMax, vibMin, vibSoma / total,
+      tempMax, tempMin, tempSoma / total,
+      total);
   }
 
   return String(csvBuffer);
@@ -370,6 +418,81 @@ String gerarJSON(){
     dado.vibracao, dado.temperatura);
 
   return String(jsonBuffer);
+}
+
+
+// buffer separado para não conflitar com jsonBuffer
+static char jsonHistBuffer[12288];
+
+String gerarJSONHistorico(){
+  memset(jsonHistBuffer, 0, sizeof(jsonHistBuffer));
+  int len = 0;
+
+  len += snprintf(jsonHistBuffer + len, sizeof(jsonHistBuffer) - len, "{\"vib\":[");
+
+  if(xSemaphoreTake(historicoMutex, pdMS_TO_TICKS(500))){
+    for(int i = 0; i < historicoCount; i++){
+      int idx = (historicoInicio + i) % MAX_HISTORICO_RAM;
+      len += snprintf(jsonHistBuffer + len, sizeof(jsonHistBuffer) - len,
+                      "%.2f%s", historicoRAM[idx].vibMedia,
+                      i < historicoCount - 1 ? "," : "");
+    }
+
+    len += snprintf(jsonHistBuffer + len, sizeof(jsonHistBuffer) - len, "],\"temp\":[");
+
+    for(int i = 0; i < historicoCount; i++){
+      int idx = (historicoInicio + i) % MAX_HISTORICO_RAM;
+      len += snprintf(jsonHistBuffer + len, sizeof(jsonHistBuffer) - len,
+                      "%.2f%s", historicoRAM[idx].tempMedia,
+                      i < historicoCount - 1 ? "," : "");
+    }
+
+    len += snprintf(jsonHistBuffer + len, sizeof(jsonHistBuffer) - len, "]}");
+    xSemaphoreGive(historicoMutex);
+  }
+
+  return String(jsonHistBuffer);
+}
+
+void carregarHistorico(){
+  if(xSemaphoreTake(fsMutex, pdMS_TO_TICKS(500))){
+    File f = LittleFS.open("/dados.csv", "r");
+    if(!f){
+      Serial.println("Sem historico salvo.");
+      xSemaphoreGive(fsMutex);
+      return;
+    }
+
+    historicoCount  = 0;
+    historicoInicio = 0;
+
+    while(f.available() && historicoCount < MAX_HISTORICO_RAM){
+      String linha = f.readStringUntil('\n');
+      linha.trim();
+
+      // ignora linhas de comentário e cabeçalho
+      if(linha.startsWith("#") || linha.startsWith("T")) continue;
+      if(linha.length() == 0) continue;
+
+      // parse: timestamp,vibMedia,tempMedia
+      int c1 = linha.indexOf(',');
+      int c2 = linha.indexOf(',', c1 + 1);
+      if(c1 < 0 || c2 < 0) continue;
+
+      DadoHistorico h;
+      h.vibMedia  = linha.substring(0, c1).toFloat();
+      h.tempMedia = linha.substring(c1 + 1, c2).toFloat();
+      h.timestamp = strtoul(linha.substring(c2 + 1).c_str(), NULL, 10);
+
+      historicoRAM[historicoCount] = h;
+      historicoCount++;
+    }
+
+    f.close();
+    xSemaphoreGive(fsMutex);
+
+    Serial.printf("Historico carregado: %d registros\n", historicoCount);
+  }
 }
 
 
@@ -422,30 +545,50 @@ void taskSensores(void *pvParameters){
   }
 }
 
+void inserirHistoricoRAM(DadoHistorico &h){
+  if(xSemaphoreTake(historicoMutex, pdMS_TO_TICKS(500))){
+    int idx = (historicoInicio + historicoCount) % MAX_HISTORICO_RAM;
+    historicoRAM[idx] = h;
+
+    if(historicoCount < MAX_HISTORICO_RAM){
+      historicoCount++;
+    } else {
+      // buffer cheio — avança o inicio (descarta o mais antigo)
+      historicoInicio = (historicoInicio + 1) % MAX_HISTORICO_RAM;
+    }
+    xSemaphoreGive(historicoMutex);
+  }
+}
+
 void taskArmazenamento(void *pvParameters){
   DadoSensor dado;
-  DadoSensor acumulado = {0.0f, 0.0f, 0};
-  int contagem = 0;
+  float acumVib  = 0.0f;
+  float acumTemp = 0.0f;
+  int   contagem = 0;
   unsigned long ultimoSalvo = millis();
 
   while(true){
     if(xQueueReceive(filaProcessamento, &dado, pdMS_TO_TICKS(1000))){
-      acumulado.vibracao    += dado.vibracao;
-      acumulado.temperatura += dado.temperatura;
-      acumulado.timestamp    = dado.timestamp;
+      acumVib  += dado.vibracao;
+      acumTemp += dado.temperatura;
       contagem++;
     }
 
     if(millis() - ultimoSalvo >= 300000 && contagem > 0){
-      DadoSensor media;
-      media.vibracao    = acumulado.vibracao    / contagem;
-      media.temperatura = acumulado.temperatura / contagem;
-      media.timestamp   = acumulado.timestamp;
+      DadoHistorico media;
+      media.vibMedia  = acumVib  / contagem;
+      media.tempMedia = acumTemp / contagem;
+      media.timestamp = millis();
 
+      // salva na flash
       salvarDado(media);
 
-      acumulado = {0.0f, 0.0f, 0};
-      contagem  = 0;
+      // salva no array circular em RAM
+      inserirHistoricoRAM(media);
+
+      acumVib  = 0.0f;
+      acumTemp = 0.0f;
+      contagem = 0;
       ultimoSalvo = millis();
     }
 
@@ -457,8 +600,8 @@ void taskArmazenamento(void *pvParameters){
 // ===== SETUP =====
 void setup(){
   Serial.begin(115200);
-  delay(500);
-
+  delay(1000);
+  Serial.println("\n\n=== BOOT ===");
   WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
 
   pinMode(LED_PIN, OUTPUT);
@@ -467,11 +610,13 @@ void setup(){
   filaProcessamento = xQueueCreate(20, sizeof(DadoSensor));
   filaLeitura       = xQueueCreate(1,  sizeof(DadoSensor));
   fsMutex           = xSemaphoreCreateMutex();
+  historicoMutex    = xSemaphoreCreateMutex();
 
   if(!LittleFS.begin(true)){
     Serial.println("ERRO: LittleFS falhou");
   } else {
     Serial.println("LittleFS OK");
+    carregarHistorico();
   }
 
   sensors.begin();
@@ -496,14 +641,17 @@ void setup(){
     iniciarAP();
   }
 
-  server.on("/salvar", HTTP_GET, handleSalvar);
-  server.serveStatic("/", LittleFS, "/").setDefaultFile("index.html");
   server.on("/data", HTTP_GET, [](AsyncWebServerRequest *request){
     request->send(200, "application/json", gerarJSON());
+  });
+  server.on("/historico", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send(200, "application/json", gerarJSONHistorico());
   });
   server.on("/csv", HTTP_GET, [](AsyncWebServerRequest *request){
     request->send(200, "text/csv", gerarCSV());
   });
+  server.on("/salvar", HTTP_GET, handleSalvar);
+  server.serveStatic("/", LittleFS, "/").setDefaultFile("index.html");
   server.begin();
 
   Serial.println("=== SISTEMA INICIADO ===");
