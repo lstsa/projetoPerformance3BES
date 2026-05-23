@@ -3,7 +3,8 @@
 #define LED_PIN 2
 #define ONE_WIRE_BUS 4
 #define SAMPLES 64
-#define SAMPLING_FREQUENCY 100
+// frequência configurável (padrão 100Hz, mínimo 10, máximo 200)
+int samplingFrequency = 100;
 #define MAX_HISTORICO 288
 
 
@@ -21,7 +22,19 @@
 #include <arduinoFFT.h>
 #include "soc/soc.h"
 #include "soc/rtc_cntl_reg.h"
+#include <LiquidCrystal_I2C.h>
 
+// ===== PINOS LEDs RGB =====
+#define LED_WIFI_R 25
+#define LED_WIFI_G 26
+#define LED_WIFI_B 27
+#define LED_VIB_R  32
+#define LED_VIB_G  33
+#define LED_VIB_B  14
+
+// ===== LCD =====
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+bool lcdDisponivel = false;
 
 
 // ===== ESTRUTURA DE DADOS =====
@@ -42,6 +55,45 @@ DadoHistorico historicoRAM[MAX_HISTORICO_RAM];
 int historicoCount = 0;      // quantos slots preenchidos
 int historicoInicio = 0;     // índice do mais antigo (buffer circular)
 SemaphoreHandle_t historicoMutex;
+
+// ===== MÉTRICAS DE TEMPO DE EXECUÇÃO =====
+volatile unsigned long tempoFFT          = 0;
+volatile unsigned long tempoArmazenamento = 0;
+volatile unsigned long tempoJSON         = 0;
+volatile unsigned long tempoTemperatura  = 0;
+volatile unsigned long tempoWifi         = 0;
+
+// ===== LOGS =====
+#define MAX_LOGS 100
+#define MAX_LOG_MSG 80
+
+typedef struct {
+  unsigned long timestamp;
+  char nivel;    // 'I' info, 'W' warning, 'E' erro
+  char msg[MAX_LOG_MSG];
+} EntradaLog;
+
+EntradaLog bufferLog[MAX_LOGS];
+int logCount   = 0;
+int logInicio  = 0;
+SemaphoreHandle_t logMutex;
+
+void registrarLog(char nivel, const char* msg){
+  if(xSemaphoreTake(logMutex, pdMS_TO_TICKS(100))){
+    int idx = (logInicio + logCount) % MAX_LOGS;
+    bufferLog[idx].timestamp = millis();
+    bufferLog[idx].nivel     = nivel;
+    strncpy(bufferLog[idx].msg, msg, MAX_LOG_MSG - 1);
+    bufferLog[idx].msg[MAX_LOG_MSG - 1] = '\0';
+
+    if(logCount < MAX_LOGS){
+      logCount++;
+    } else {
+      logInicio = (logInicio + 1) % MAX_LOGS;
+    }
+    xSemaphoreGive(logMutex);
+  }
+}
 
 
 // ===== FILAS =====
@@ -143,6 +195,7 @@ void iniciarAP(){
   wifiState = AP_MODE;
   Serial.println("=== MODO AP ATIVO ===");
   Serial.println(WiFi.softAPIP());
+  registrarLog('I', "Modo AP ativo: 192.168.4.1");
 }
 
 void iniciarSTA(){
@@ -157,9 +210,13 @@ void iniciarSTA(){
   wifiState = CONNECTING;
   Serial.println("=== CONECTANDO ===");
   Serial.println(ssidSalvo);
+  char logMsg[MAX_LOG_MSG];
+  snprintf(logMsg, sizeof(logMsg), "Conectando ao Wi-Fi: %s", ssidSalvo.c_str());
+  registrarLog('I', logMsg);
 }
 
 void gerenciarWiFi(){
+  unsigned long t0 = micros();
   wl_status_t status = WiFi.status();
 
   switch(wifiState){
@@ -172,9 +229,13 @@ void gerenciarWiFi(){
         wifiState = CONNECTED;
         Serial.println("=== WIFI CONECTADO ===");
         Serial.println(WiFi.localIP());
+        char logMsg[MAX_LOG_MSG];
+        snprintf(logMsg, sizeof(logMsg), "Wi-Fi conectado. IP: %s", WiFi.localIP().toString().c_str());
+        registrarLog('I', logMsg);
       } else if(millis() - wifiStart > wifiTimeout){
         Serial.println("=== FALHA AO CONECTAR ===");
         WiFi.disconnect();
+        registrarLog('E', "Falha ao conectar ao Wi-Fi. Voltando ao modo AP.");
         iniciarAP();
       }
       break;
@@ -188,6 +249,7 @@ void gerenciarWiFi(){
         } else if(millis() - inicioQueda > 5000){
           inicioQueda = 0;
           Serial.println("=== WIFI DESCONECTADO ===");
+          registrarLog('W', "Wi-Fi desconectado. Voltando ao modo AP.");
           iniciarAP();
         }
       } else {
@@ -196,6 +258,8 @@ void gerenciarWiFi(){
       }
       break;
   }
+
+  tempoWifi = micros() - t0;
 }
 
 void handleSalvar(AsyncWebServerRequest *request){
@@ -255,6 +319,7 @@ void coletarAmostraFFT(){
 }
 
 void processarFFT(float tempAtual){
+  unsigned long t0 = micros();
   double somaQuad = 0;
   for(int i = 0; i < SAMPLES; i++){
     somaQuad += vReal[i] * vReal[i];
@@ -275,7 +340,7 @@ void processarFFT(float tempAtual){
     }
   }
 
-  double freq = (idx * SAMPLING_FREQUENCY) / (double)SAMPLES;
+  double freq = (idx * samplingFrequency) / (double)SAMPLES;
   if(freq <= 1){
     fftReady = false;
     return;
@@ -290,11 +355,13 @@ void processarFFT(float tempAtual){
 
   xQueueSend(filaProcessamento, &dado, 0);
   xQueueOverwrite(filaLeitura, &dado);
-
+  
+  tempoFFT = micros() - t0;
   fftReady = false;
 }
 
 void atualizarTemperatura(float &tempAtual){
+  unsigned long t0 = micros();
   if(!aguardandoTemp && millis() - ultimoTempRequest >= 1000){
     sensors.requestTemperatures();
     aguardandoTemp = true;
@@ -308,6 +375,7 @@ void atualizarTemperatura(float &tempAtual){
     }
     aguardandoTemp = false;
   }
+  tempoTemperatura = micros() - t0;
 }
 
 
@@ -348,6 +416,7 @@ void salvarDado(DadoHistorico &dado){
       fa.close();
     }
 
+    registrarLog('I', "Historico salvo na flash.");
     xSemaphoreGive(fsMutex);
   }
 }
@@ -410,13 +479,15 @@ String gerarCSV(){
 }
 
 String gerarJSON(){
+  unsigned long t0 = micros();
   DadoSensor dado = {0.0f, 0.0f, 0};
   xQueuePeek(filaLeitura, &dado, 0);
 
   snprintf(jsonBuffer, sizeof(jsonBuffer),
     "{\"vibAtual\":%.2f,\"tempAtual\":%.2f}",
     dado.vibracao, dado.temperatura);
-
+    
+  tempoJSON = micros() - t0;
   return String(jsonBuffer);
 }
 
@@ -452,6 +523,80 @@ String gerarJSONHistorico(){
   }
 
   return String(jsonHistBuffer);
+}
+
+
+static char jsonLogsBuffer[12288];
+
+String gerarJSONLogs(){
+  memset(jsonLogsBuffer, 0, sizeof(jsonLogsBuffer));
+  int len = 0;
+
+  len += snprintf(jsonLogsBuffer + len, sizeof(jsonLogsBuffer) - len, "[");
+
+  if(xSemaphoreTake(logMutex, pdMS_TO_TICKS(500))){
+    for(int i = 0; i < logCount; i++){
+      int idx = (logInicio + i) % MAX_LOGS;
+      char nivel[2] = { bufferLog[idx].nivel, '\0' };
+      len += snprintf(jsonLogsBuffer + len, sizeof(jsonLogsBuffer) - len,
+        "{\"t\":%lu,\"n\":\"%s\",\"m\":\"%s\"}%s",
+        bufferLog[idx].timestamp,
+        nivel,
+        bufferLog[idx].msg,
+        i < logCount - 1 ? "," : "");
+    }
+    xSemaphoreGive(logMutex);
+  }
+
+  len += snprintf(jsonLogsBuffer + len, sizeof(jsonLogsBuffer) - len, "]");
+  return String(jsonLogsBuffer);
+}
+
+static char jsonPerfBuffer[2048];
+
+String gerarJSONPerformance(){
+  memset(jsonPerfBuffer, 0, sizeof(jsonPerfBuffer));
+
+  // heap
+  uint32_t heapLivre  = ESP.getFreeHeap();
+  uint32_t heapTotal  = ESP.getHeapSize();
+  uint32_t heapUsado  = heapTotal - heapLivre;
+
+  // flash
+  uint32_t flashTotal = ESP.getFlashChipSize();
+  uint32_t sketchUsado = ESP.getSketchSize();
+
+  // uptime
+  unsigned long uptime = millis() / 1000;
+
+  // wifi rssi
+  int rssi = (wifiState == CONNECTED) ? WiFi.RSSI() : 0;
+
+  snprintf(jsonPerfBuffer, sizeof(jsonPerfBuffer),
+    "{"
+    "\"heapLivre\":%lu,"
+    "\"heapTotal\":%lu,"
+    "\"heapUsado\":%lu,"
+    "\"flashTotal\":%lu,"
+    "\"sketchUsado\":%lu,"
+    "\"uptime\":%lu,"
+    "\"rssi\":%d,"
+    "\"wifiState\":\"%s\","
+    "\"tempoFFT\":%lu,"
+    "\"tempoArmazenamento\":%lu,"
+    "\"tempoJSON\":%lu,"
+    "\"tempoTemperatura\":%lu,"
+    "\"tempoWifi\":%lu"
+    "}",
+    heapLivre, heapTotal, heapUsado,
+    flashTotal, sketchUsado,
+    uptime, rssi,
+    wifiState == CONNECTED ? "Conectado" : wifiState == CONNECTING ? "Conectando" : "AP",
+    tempoFFT, tempoArmazenamento, tempoJSON,
+    tempoTemperatura, tempoWifi
+  );
+
+  return String(jsonPerfBuffer);
 }
 
 void carregarHistorico(){
@@ -492,6 +637,9 @@ void carregarHistorico(){
     xSemaphoreGive(fsMutex);
 
     Serial.printf("Historico carregado: %d registros\n", historicoCount);
+    char logMsg[MAX_LOG_MSG];
+    snprintf(logMsg, sizeof(logMsg), "Historico carregado: %d registros.", historicoCount);
+    registrarLog('I', logMsg);
   }
 }
 
@@ -522,11 +670,96 @@ void atualizarLED(){
   }
 }
 
+// catodo comum: 0 = apagado, 255 = máximo brilho
+void setLED(int pinR, int pinG, int pinB, int r, int g, int b){
+  analogWrite(pinR, r);
+  analogWrite(pinG, g);
+  analogWrite(pinB, b);
+}
+
+void atualizarLEDWifi(){
+  static unsigned long lastBlink = 0;
+  static bool estado = false;
+
+  switch(wifiState){
+    case AP_MODE:
+      // amarelo fixo
+      setLED(LED_WIFI_R, LED_WIFI_G, LED_WIFI_B, 255, 180, 0);
+      break;
+    case CONNECTING:
+      // azul piscando
+      if(millis() - lastBlink > 300){
+        estado = !estado;
+        lastBlink = millis();
+      }
+      setLED(LED_WIFI_R, LED_WIFI_G, LED_WIFI_B,
+             0, 0, estado ? 255 : 0);
+      break;
+    case CONNECTED:
+      // verde fixo
+      setLED(LED_WIFI_R, LED_WIFI_G, LED_WIFI_B, 0, 255, 0);
+      break;
+  }
+}
+
+void atualizarLEDVibracao(float vRMS){
+  if(vRMS < 2.8){
+    // verde
+    setLED(LED_VIB_R, LED_VIB_G, LED_VIB_B, 0, 255, 0);
+  } else if(vRMS < 7.1){
+    // amarelo
+    setLED(LED_VIB_R, LED_VIB_G, LED_VIB_B, 255, 180, 0);
+  } else if(vRMS < 18.0){
+    // laranja
+    setLED(LED_VIB_R, LED_VIB_G, LED_VIB_B, 255, 60, 0);
+  } else {
+    // vermelho
+    setLED(LED_VIB_R, LED_VIB_G, LED_VIB_B, 255, 0, 0);
+  }
+}
+
+void atualizarLCD(){
+  if(!lcdDisponivel) return;
+  static unsigned long ultimoLCD = 0;
+  if(millis() - ultimoLCD < 5000) return; // atualiza a cada 5s
+  ultimoLCD = millis();
+
+  lcd.clear();
+  lcd.setCursor(0, 0);
+
+  switch(wifiState){
+    case AP_MODE:
+      lcd.print("AP: 192.168.4.1");
+      lcd.setCursor(0, 1);
+      lcd.print("Rede: ESP-CONFIG");
+      break;
+    case CONNECTING:
+      lcd.print("Conectando...");
+      lcd.setCursor(0, 1);
+      lcd.print(ssidSalvo.substring(0, 16));
+      break;
+    case CONNECTED:
+      lcd.print("IP:");
+      lcd.print(WiFi.localIP().toString());
+      lcd.setCursor(0, 1);
+      lcd.print("WiFi: OK");
+      break;
+  }
+}
+
 // ===== TASKS =====
 void taskComunicacao(void *pvParameters){
   while(true){
     gerenciarWiFi();
     atualizarLED();
+    atualizarLEDWifi();
+
+    // vibração atual para o LED
+    DadoSensor dadoAtual = {0.0f, 0.0f, 0};
+    xQueuePeek(filaLeitura, &dadoAtual, 0);
+    atualizarLEDVibracao(dadoAtual.vibracao);
+
+    atualizarLCD();
     vTaskDelay(100 / portTICK_PERIOD_MS);
   }
 }
@@ -575,6 +808,7 @@ void taskArmazenamento(void *pvParameters){
     }
 
     if(millis() - ultimoSalvo >= 300000 && contagem > 0){
+      unsigned long t0 = micros();
       DadoHistorico media;
       media.vibMedia  = acumVib  / contagem;
       media.tempMedia = acumTemp / contagem;
@@ -585,6 +819,7 @@ void taskArmazenamento(void *pvParameters){
 
       // salva no array circular em RAM
       inserirHistoricoRAM(media);
+      tempoArmazenamento = micros() - t0;
 
       acumVib  = 0.0f;
       acumTemp = 0.0f;
@@ -605,18 +840,49 @@ void setup(){
   WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
 
   pinMode(LED_PIN, OUTPUT);
+  pinMode(LED_WIFI_R, OUTPUT); pinMode(LED_WIFI_G, OUTPUT); pinMode(LED_WIFI_B, OUTPUT);
+  pinMode(LED_VIB_R,  OUTPUT); pinMode(LED_VIB_G,  OUTPUT); pinMode(LED_VIB_B,  OUTPUT);
 
   // recursos compartilhados
   filaProcessamento = xQueueCreate(20, sizeof(DadoSensor));
   filaLeitura       = xQueueCreate(1,  sizeof(DadoSensor));
   fsMutex           = xSemaphoreCreateMutex();
   historicoMutex    = xSemaphoreCreateMutex();
+  logMutex          = xSemaphoreCreateMutex();
+
+  Wire.begin();
+  Wire.beginTransmission(0x27);
+  bool lcdPresente = (Wire.endTransmission() == 0);
+  if(lcdPresente){
+    lcd.init();
+    lcd.backlight();
+    lcd.setCursor(0, 0);
+    lcd.print("Iniciando...");
+    registrarLog('I', "LCD encontrado e iniciado.");
+  } else {
+    registrarLog('W', "LCD nao encontrado. Continuando sem display.");
+  }
+  lcdDisponivel = lcdPresente;
 
   if(!LittleFS.begin(true)){
     Serial.println("ERRO: LittleFS falhou");
   } else {
     Serial.println("LittleFS OK");
     carregarHistorico();
+
+    // estima tempo desligado pelo último timestamp do histórico
+    if(historicoCount > 0){
+      int ultimoIdx = (historicoInicio + historicoCount - 1) % MAX_HISTORICO_RAM;
+      unsigned long ultimoTs = historicoRAM[ultimoIdx].timestamp;
+      unsigned long tempoDesligado = ultimoTs / 1000; // converte ms para segundos aproximado
+      char logMsg[MAX_LOG_MSG];
+      snprintf(logMsg, sizeof(logMsg),
+        "REINICIO detectado. Ultimo registro: %lus atras (estimado).",
+        tempoDesligado);
+      registrarLog('W', logMsg);
+    } else {
+      registrarLog('I', "Primeira inicializacao. Sem historico anterior.");
+    }
   }
 
   sensors.begin();
@@ -627,6 +893,7 @@ void setup(){
     while(true){ vTaskDelay(100 / portTICK_PERIOD_MS); }
   }
   Serial.println("ADXL345 OK");
+  registrarLog('I', "Sistema iniciado. ADXL345 OK.");
 
 // timer de interrupção
   timer = timerBegin(1000000);                    
@@ -651,6 +918,39 @@ void setup(){
     request->send(200, "text/csv", gerarCSV());
   });
   server.on("/salvar", HTTP_GET, handleSalvar);
+  server.on("/performance", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send(200, "application/json", gerarJSONPerformance());
+  });
+  server.on("/logs", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send(200, "application/json", gerarJSONLogs());
+  });
+  server.on("/logs/limpar", HTTP_GET, [](AsyncWebServerRequest *request){
+    if(xSemaphoreTake(logMutex, pdMS_TO_TICKS(500))){
+      logCount  = 0;
+      logInicio = 0;
+      xSemaphoreGive(logMutex);
+    }
+    request->send(200, "text/plain", "OK");
+  });
+  server.on("/config", HTTP_GET, [](AsyncWebServerRequest *request){
+    if(request->hasParam("freq")){
+      int f = request->getParam("freq")->value().toInt();
+      if(f >= 10 && f <= 200){
+        samplingFrequency = f;
+        timerAlarm(timer, 1000000 / f, true, 0);
+        char logMsg[MAX_LOG_MSG];
+        snprintf(logMsg, sizeof(logMsg), "Frequencia alterada para %dHz.", f);
+        registrarLog('I', logMsg);
+        request->send(200, "text/plain", "OK");
+      } else {
+        request->send(400, "text/plain", "Frequencia invalida (10-200Hz)");
+      }
+    } else {
+      char buf[64];
+      snprintf(buf, sizeof(buf), "{\"freq\":%d}", samplingFrequency);
+      request->send(200, "application/json", buf);
+    }
+  });
   server.serveStatic("/", LittleFS, "/").setDefaultFile("index.html");
   server.begin();
 

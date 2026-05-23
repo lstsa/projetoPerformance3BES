@@ -5,187 +5,578 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ESP Monitor</title>
 <style>
-  body { font-family: sans-serif; margin: 16px; background: #f4f4f4; }
-  h2 { margin-bottom: 4px; }
-  .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
-  .tabs button {
-    padding: 8px 18px; border: none; border-radius: 6px;
-    background: #ddd; cursor: pointer; font-size: 14px;
-  }
-  .tabs button.ativo { background: #333; color: #fff; }
-  .card {
-    background: #fff; border-radius: 8px;
-    padding: 16px; margin-bottom: 16px;
-    box-shadow: 0 1px 4px rgba(0,0,0,.1);
-  }
-  .valor-destaque {
-    font-size: 1.6em; font-weight: bold; color: #333;
-  }
-  .unidade {
-    font-size: 0.9em; color: #666; margin-left: 4px;
-  }
-  canvas { display: block; max-width: 100%; }
-  input { padding: 6px; margin: 4px 0; width: 220px; }
-  label { display: block; margin-top: 8px; font-size: 14px; }
-  .btn {
-    padding: 8px 18px; border: none; border-radius: 6px;
-    background: #333; color: #fff; cursor: pointer; margin-top: 10px;
-  }
-  #status-wifi { font-size: 13px; color: #555; margin-top: 6px; }
+/* ===== RESET E BASE ===== */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: sans-serif; background: #f0f2f5; display: flex; min-height: 100vh; }
+
+/* ===== MENU LATERAL ===== */
+#sidebar {
+  width: 180px; min-height: 100vh; background: #1a1a2e;
+  display: flex; flex-direction: column; padding: 24px 0;
+  position: fixed; top: 0; left: 0; z-index: 100;
+}
+#sidebar h1 {
+  color: #fff; font-size: 14px; text-align: center;
+  padding: 0 16px 24px; border-bottom: 1px solid #333;
+  letter-spacing: 1px;
+}
+.nav-item {
+  padding: 14px 20px; color: #aaa; cursor: pointer;
+  font-size: 14px; display: flex; align-items: center; gap: 10px;
+  transition: all .2s; border-left: 3px solid transparent;
+}
+.nav-item:hover { color: #fff; background: rgba(255,255,255,.05); }
+.nav-item.ativo { color: #fff; border-left-color: #4fc3f7; background: rgba(79,195,247,.08); }
+.nav-icon { font-size: 16px; }
+
+/* ===== CONTEÚDO PRINCIPAL ===== */
+#conteudo {
+  margin-left: 180px; flex: 1; padding: 24px;
+}
+
+/* ===== SEÇÕES ===== */
+.secao { display: none; }
+.secao.ativa { display: block; }
+
+/* ===== HEADER DE DADOS ===== */
+.header-dados {
+  background: #1a1a2e; border-radius: 12px;
+  padding: 20px; margin-bottom: 24px; color: #fff; text-align: center;
+}
+.header-dados h2 {
+  font-size: 13px; color: #4fc3f7; letter-spacing: 2px;
+  text-transform: uppercase; margin-bottom: 16px;
+}
+.dados-grid {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;
+  align-items: stretch;
+}
+.dado-bloco {
+  background: rgba(255,255,255,.06); border-radius: 8px; padding: 12px;
+  display: flex; flex-direction: column; justify-content: center;
+}
+.dado-bloco .label { font-size: 11px; color: #888; margin-bottom: 6px; }
+.dado-bloco .valor-principal { font-size: 26px; font-weight: bold; color: #fff; }
+.dado-bloco .unidade { font-size: 11px; color: #aaa; }
+.dado-bloco .minmax {
+  font-size: 12px; color: #aaa; margin-top: 8px;
+  display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+}
+.dado-bloco .minmax span { display: flex; flex-direction: column; align-items: center; }
+.dado-bloco .minmax .lbl { font-size: 10px; color: #666; margin-bottom: 2px; }
+.dado-bloco .minmax b { font-size: 16px; color: #fff; }
+
+/* ===== CARDS ===== */
+.card {
+  background: #fff; border-radius: 12px;
+  padding: 20px; margin-bottom: 20px;
+  box-shadow: 0 1px 4px rgba(0,0,0,.08);
+}
+.card-titulo { font-size: 13px; color: #555; margin-bottom: 12px; font-weight: 600; }
+
+/* ===== LAYOUT GRÁFICOS ===== */
+.graficos-5min {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px;
+}
+
+/* ===== CANVAS COM EIXOS ===== */
+.grafico-wrapper {
+  position: relative; overflow: hidden;
+}
+.eixo-y {
+  position: absolute; left: 0; top: 0; bottom: 20px;
+  width: 48px; display: flex; flex-direction: column;
+  justify-content: space-between; padding: 4px 4px 0 0;
+  font-size: 10px; color: #999; text-align: right; pointer-events: none;
+}
+.eixo-x {
+  position: absolute; bottom: 0; left: 48px; right: 0;
+  display: flex; justify-content: space-between;
+  font-size: 10px; color: #999; pointer-events: none; padding: 2px 4px 0;
+}
+.canvas-area { margin-left: 48px; margin-bottom: 20px; overflow-x: auto; }
+canvas { display: block; }
+
+/* ===== PERFORMANCE ===== */
+.perf-grid {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 20px;
+}
+.perf-card {
+  background: #f8f9fa; border-radius: 8px; padding: 14px; text-align: center;
+}
+.perf-card .p-label { font-size: 11px; color: #888; margin-bottom: 4px; }
+.perf-card .p-valor { font-size: 20px; font-weight: bold; color: #1a1a2e; }
+.perf-card .p-unit  { font-size: 11px; color: #aaa; }
+.barra-container { background: #e9ecef; border-radius: 4px; height: 8px; margin-top: 6px; }
+.barra { height: 8px; border-radius: 4px; background: #4fc3f7; transition: width .5s; }
+
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #f0f0f0; }
+th { background: #f8f9fa; color: #555; font-weight: 600; }
+td { color: #333; }
+
+/* ===== LOGS ===== */
+#terminal {
+  background: #0d1117; border-radius: 8px; padding: 16px;
+  height: 420px; overflow-y: auto; font-family: monospace; font-size: 13px;
+  color: #c9d1d9;
+}
+.log-I { color: #58a6ff; }
+.log-W { color: #d29922; }
+.log-E { color: #f85149; }
+.log-linha { margin-bottom: 3px; line-height: 1.5; }
+
+/* ===== BOTÕES ===== */
+.btn {
+  padding: 9px 18px; border: none; border-radius: 6px;
+  background: #1a1a2e; color: #fff; cursor: pointer;
+  font-size: 13px; margin-right: 8px; margin-top: 12px;
+}
+.btn:hover { background: #2a2a4e; }
+.btn-danger { background: #c0392b; }
+.btn-danger:hover { background: #a93226; }
+
+/* ===== FORMULÁRIO ===== */
+label { display: block; font-size: 13px; color: #555; margin-top: 14px; margin-bottom: 4px; }
+input[type=text], input[type=password], input[type=number] {
+  width: 100%; max-width: 320px; padding: 9px 12px;
+  border: 1px solid #ddd; border-radius: 6px; font-size: 13px;
+}
+#status-config { font-size: 13px; color: #555; margin-top: 10px; }
+
+/* ===== SOBRE ===== */
+.sobre-bloco { margin-bottom: 16px; }
+.sobre-bloco h3 { font-size: 14px; color: #1a1a2e; margin-bottom: 6px; }
+.sobre-bloco p, .sobre-bloco li { font-size: 13px; color: #555; line-height: 1.7; }
+.sobre-bloco ul { padding-left: 18px; }
+.changelog-item { border-left: 3px solid #4fc3f7; padding-left: 12px; margin-bottom: 12px; }
+.changelog-item .version { font-weight: bold; font-size: 13px; color: #1a1a2e; }
+.changelog-item .date { font-size: 11px; color: #888; }
+.changelog-item ul { margin-top: 4px; }
 </style>
 </head>
 <body>
 
-<h2>ESP Monitor</h2>
-<p style="font-size:12px;color:#888;margin-top:0">
-  Vibração medida em mm/s RMS — conforme ISO 10816
-</p>
-
-<div class="tabs">
-  <button class="ativo" onclick="mostrar('monitor', this)">Monitoramento</button>
-  <button onclick="mostrar('config', this)">Configurações</button>
-</div>
-
-<!-- ===== MONITOR ===== -->
-<div id="monitor">
-
-  <div class="card">
-    <div style="margin-bottom:4px;color:#555">Vibração atual</div>
-    <span class="valor-destaque" id="vib-valor">—</span>
-    <span class="unidade">mm/s RMS</span>
+<!-- ===== MENU LATERAL ===== -->
+<nav id="sidebar">
+  <h1>ESP MONITOR</h1>
+  <div class="nav-item ativo" onclick="mostrar('home', this)">
+    <span class="nav-icon">📊</span> Home
   </div>
-
-  <div class="card">
-    <div style="margin-bottom:4px;color:#555">Temperatura atual</div>
-    <span class="valor-destaque" id="temp-valor">—</span>
-    <span class="unidade">°C</span>
+  <div class="nav-item" onclick="mostrar('performance', this)">
+    <span class="nav-icon">⚡</span> Performance
   </div>
+  <div class="nav-item" onclick="mostrar('logs', this)">
+    <span class="nav-icon">🖥️</span> Logs
+  </div>
+  <div class="nav-item" onclick="mostrar('config', this)">
+    <span class="nav-icon">⚙️</span> Configurações
+  </div>
+  <div class="nav-item" onclick="mostrar('sobre', this)">
+    <span class="nav-icon">ℹ️</span> Sobre
+  </div>
+</nav>
+
+<!-- ===== CONTEÚDO ===== -->
+<main id="conteudo">
+
+  <!-- ===== HOME ===== -->
+  <section id="home" class="secao ativa">
+
+    <div class="header-dados">
+      <h2>Monitoramento — ISO 10816</h2>
+      <div class="dados-grid">
+
+        <div class="dado-bloco">
+          <div class="label">Vibração Atual</div>
+          <div class="valor-principal" id="vib-atual">—</div>
+          <div class="unidade">mm/s RMS</div>
+        </div>
+
+        <div class="dado-bloco">
+          <div class="label">Últimos 5 min</div>
+          <div class="minmax">
+            <span><span class="lbl">VIB MÁX</span><b id="vib-max-5m">—</b></span>
+            <span><span class="lbl">VIB MÍN</span><b id="vib-min-5m">—</b></span>
+            <span><span class="lbl">TEMP MÁX</span><b id="temp-max-5m">—</b></span>
+            <span><span class="lbl">TEMP MÍN</span><b id="temp-min-5m">—</b></span>
+          </div>
+        </div>
+
+        <div class="dado-bloco">
+          <div class="label">Últimas 24h</div>
+          <div class="minmax">
+            <span><span class="lbl">VIB MÁX</span><b id="vib-max-24h">—</b></span>
+            <span><span class="lbl">VIB MÍN</span><b id="vib-min-24h">—</b></span>
+            <span><span class="lbl">TEMP MÁX</span><b id="temp-max-24h">—</b></span>
+            <span><span class="lbl">TEMP MÍN</span><b id="temp-min-24h">—</b></span>
+          </div>
+        </div>
+
+        <div class="dado-bloco">
+          <div class="label">Temperatura Atual</div>
+          <div class="valor-principal" id="temp-atual">—</div>
+          <div class="unidade">°C</div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Gráficos 5min lado a lado -->
+    <div class="graficos-5min">
+      <div class="card">
+        <div class="card-titulo">Vibração — 5 min (mm/s RMS)</div>
+        <div class="grafico-wrapper">
+          <div class="eixo-y" id="ey-vib"></div>
+          <div class="canvas-area">
+            <canvas id="vib" height="160" width="600"></canvas>
+          </div>
+          <div class="eixo-x"><span>0</span><span id="ex-vib">5 min</span></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-titulo">Temperatura — 5 min (°C)</div>
+        <div class="grafico-wrapper">
+          <div class="eixo-y" id="ey-temp"></div>
+          <div class="canvas-area">
+            <canvas id="temp" height="160" width="600"></canvas>
+          </div>
+          <div class="eixo-x"><span>0</span><span id="ex-temp">5 min</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Gráficos 24h empilhados -->
+    <div class="card">
+      <div class="card-titulo">Vibração — 24h (mm/s RMS)</div>
+      <div class="grafico-wrapper">
+        <div class="eixo-y" id="ey-vibH"></div>
+        <div class="canvas-area" style="overflow-x:auto">
+          <canvas id="vibHist" height="160" style="min-width:600px"></canvas>
+        </div>
+        <div class="eixo-x"><span>24h atrás</span><span>Agora</span></div>
+      </div>
+    </div>
 
     <div class="card">
-    <div style="margin-bottom:8px;color:#555">Vibração — tempo real (últimos 5 min) — mm/s RMS</div>
-    <div style="overflow-x:auto">
-      <canvas id="vib" height="160" style="min-width:600px"></canvas>
+      <div class="card-titulo">Temperatura — 24h (°C)</div>
+      <div class="grafico-wrapper">
+        <div class="eixo-y" id="ey-tempH"></div>
+        <div class="canvas-area" style="overflow-x:auto">
+          <canvas id="tempHist" height="160" style="min-width:600px"></canvas>
+        </div>
+        <div class="eixo-x"><span>24h atrás</span><span>Agora</span></div>
+      </div>
     </div>
-  </div>
 
-  <div class="card">
-    <div style="margin-bottom:8px;color:#555">Temperatura — tempo real (últimos 5 min) — °C</div>
-    <div style="overflow-x:auto">
-      <canvas id="temp" height="160" style="min-width:600px"></canvas>
+    <div class="card">
+      <a href="/csv" class="btn">📥 Baixar CSV</a>
     </div>
-  </div>
 
-  <div class="card">
-    <div style="margin-bottom:8px;color:#555">Vibração — histórico 24h (média a cada 5 min) — mm/s RMS</div>
-    <div style="overflow-x:auto">
-      <canvas id="vibHist" height="160" style="min-width:600px"></canvas>
+  </section>
+
+  <!-- ===== PERFORMANCE ===== -->
+  <section id="performance" class="secao">
+
+    <div class="card">
+      <div class="card-titulo">Memória</div>
+      <div class="perf-grid">
+        <div class="perf-card">
+          <div class="p-label">Heap Livre</div>
+          <div class="p-valor" id="p-heapLivre">—</div>
+          <div class="p-unit">bytes — <span id="p-heapLivrePct">—</span>%</div>
+          <div class="barra-container"><div class="barra" id="b-heap" style="width:0%"></div></div>
+        </div>
+        <div class="perf-card">
+          <div class="p-label">Heap Usado</div>
+          <div class="p-valor" id="p-heapUsado">—</div>
+          <div class="p-unit">bytes — <span id="p-heapUsadoPct">—</span>%</div>
+          <div class="barra-container">
+            <div class="barra" id="b-heapUsado" style="width:0%;background:#e74c3c"></div>
+          </div>
+        </div>
+        <div class="perf-card">
+          <div class="p-label">Sketch / Flash</div>
+          <div class="p-valor" id="p-sketch">—</div>
+          <div class="p-unit">bytes — <span id="p-sketchPct">—</span>% de 1.31MB</div>
+        </div>
+      </div>
     </div>
-  </div>
 
-  <div class="card">
-    <div style="margin-bottom:8px;color:#555">Temperatura — histórico 24h (média a cada 5 min) — °C</div>
-    <div style="overflow-x:auto">
-      <canvas id="tempHist" height="160" style="min-width:600px"></canvas>
+    <div class="card">
+      <div class="card-titulo">Sistema</div>
+      <div class="perf-grid">
+        <div class="perf-card">
+          <div class="p-label">Uptime</div>
+          <div class="p-valor" id="p-uptime">—</div>
+          <div class="p-unit">segundos</div>
+        </div>
+        <div class="perf-card">
+          <div class="p-label">Wi-Fi</div>
+          <div class="p-valor" id="p-wifi">—</div>
+          <div class="p-unit"></div>
+        </div>
+        <div class="perf-card">
+          <div class="p-label">RSSI</div>
+          <div class="p-valor" id="p-rssi">—</div>
+          <div class="p-unit">dBm</div>
+        </div>
+      </div>
     </div>
-  </div>
 
-  <div class="card">
-    <a href="/csv" class="btn">📥 Baixar CSV</a>
-  </div>
+    <div class="card">
+      <div class="card-titulo">Tempo de execução das funções</div>
+      <table>
+        <thead><tr><th>Função</th><th>Último tempo (µs)</th></tr></thead>
+        <tbody>
+          <tr><td>processarFFT()</td><td id="t-fft">—</td></tr>
+          <tr><td>taskArmazenamento() — save</td><td id="t-arm">—</td></tr>
+          <tr><td>gerarJSON()</td><td id="t-json">—</td></tr>
+          <tr><td>atualizarTemperatura()</td><td id="t-temp">—</td></tr>
+          <tr><td>gerenciarWiFi()</td><td id="t-wifi">—</td></tr>
+        </tbody>
+      </table>
+    </div>
 
-</div>
+    <div class="card">
+      <div class="card-titulo">Gráficos de performance</div>
+      <div class="grafico-wrapper" style="margin-bottom:20px">
+        <div class="eixo-y" id="ey-heap"></div>
+        <div class="canvas-area">
+          <canvas id="heapChart" height="120" width="600"></canvas>
+        </div>
+        <div class="eixo-x"><span>0</span><span>Heap livre (bytes)</span></div>
+      </div>
+    </div>
 
-<!-- ===== CONFIG ===== -->
-<div id="config" style="display:none">
-  <div class="card">
-    <h3 style="margin-top:0">Configuração Wi-Fi</h3>
-    <label>SSID<input id="ssid" placeholder="Nome da rede"></label>
-    <label>Senha<input id="senha" type="password" placeholder="Senha"></label>
-    <button class="btn" onclick="salvarWifi()">Salvar e reconectar</button>
-    <div id="status-wifi"></div>
-  </div>
-</div>
+  </section>
+
+  <!-- ===== LOGS ===== -->
+  <section id="logs" class="secao">
+    <div class="card">
+      <div class="card-titulo">Terminal de logs</div>
+      <div id="terminal"></div>
+      <div>
+        <button class="btn" onclick="exportarLogs()">📥 Exportar</button>
+        <button class="btn btn-danger" onclick="limparLogs()">🗑️ Limpar</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== CONFIGURAÇÕES ===== -->
+  <section id="config" class="secao">
+    <div class="card">
+      <div class="card-titulo">Wi-Fi</div>
+      <label>SSID<input type="text" id="ssid" placeholder="Nome da rede"></label>
+      <label>Senha<input type="password" id="senha" placeholder="Senha"></label>
+      <button class="btn" onclick="salvarWifi()">Salvar e reconectar</button>
+      <div id="status-config"></div>
+    </div>
+    <div class="card">
+      <div class="card-titulo">Frequência de amostragem</div>
+      <label>Frequência (Hz) — mín 10, máx 200
+        <input type="number" id="freq-input" min="10" max="200" value="100">
+      </label>
+      <button class="btn" onclick="salvarFreq()">Aplicar</button>
+      <div id="status-freq"></div>
+    </div>
+  </section>
+
+  <!-- ===== SOBRE ===== -->
+  <section id="sobre" class="secao">
+    <div class="card">
+      <div class="sobre-bloco">
+        <h3>ESP Monitor — Monitoramento de Sistemas Ciberfísicos</h3>
+        <p>Sistema embarcado de monitoramento de vibração e temperatura conforme ISO 10816, desenvolvido com ESP32.</p>
+      </div>
+      <div class="sobre-bloco">
+        <h3>Universidade</h3>
+        <p>Pontifícia Universidade católica do Paraná</p>
+      </div>
+      <div class="sobre-bloco">
+        <h3>Integrantes</h3>
+        <ul>
+          <li>Arlen abtibol, Lucas Koiti, Luis Lustosa, Luiz Dias, Luiz Simm, Rafael Sato</li>
+        </ul>
+      </div>
+      <div class="sobre-bloco">
+        <h3>Contato</h3>
+        <p>— e-mail —</p>
+      </div>
+      <div class="sobre-bloco">
+        <h3>Repositório</h3>
+        <p><a href="#" target="_blank">https://github.com/lstsa/projetoPerformance3BES.git</a></p>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-titulo">Changelog</div>
+      <div class="changelog-item">
+        <div class="version">v1.0.0</div>
+        <div class="date">2026</div>
+        <ul>
+          <li>Leitura de vibração (mm/s RMS — ISO 10816) e temperatura</li>
+          <li>Histórico de 24h com persistência em flash</li>
+          <li>Interface web com 4 gráficos e menu lateral</li>
+          <li>Aba de performance, logs e configurações</li>
+          <li>Configuração de Wi-Fi e frequência de amostragem via interface</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+</main>
 
 <script>
 // ===== NAVEGAÇÃO =====
-function mostrar(sec, btn){
-  document.getElementById('monitor').style.display = 'none';
-  document.getElementById('config').style.display  = 'none';
-  document.getElementById(sec).style.display = 'block';
-  document.querySelectorAll('.tabs button')
-    .forEach(b => b.classList.remove('ativo'));
-  if(btn) btn.classList.add('ativo');
+function mostrar(sec, el){
+  document.querySelectorAll('.secao').forEach(s => s.classList.remove('ativa'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('ativo'));
+  document.getElementById(sec).classList.add('ativa');
+  if(el) el.classList.add('ativo');
 }
 
 // ===== DADOS =====
 const MAX_PTS = 150;
-let vibDados  = [];
-let tempDados = [];
-let vibHistDados  = [];
-let tempHistDados = [];
+let vibDados  = [], tempDados  = [];
+let vibHist   = [], tempHist   = [];
+let heapDados = [];
+
+// ===== EIXO Y =====
+function atualizarEixoY(elId, minVal, maxVal){
+  const el = document.getElementById(elId);
+  if(!el) return;
+  const mid = ((minVal + maxVal) / 2).toFixed(1);
+  el.innerHTML =
+    `<span>${maxVal.toFixed(1)}</span>` +
+    `<span>${mid}</span>` +
+    `<span>${minVal.toFixed(1)}</span>`;
+}
 
 // ===== DESENHO =====
-function desenhar(canvas, dados, corLinha){
+function desenhar(canvas, dados, corLinha, eixoYId, intervaloX){
   const ctx = canvas.getContext('2d');
-  const W   = Math.max(600, dados.length * 5);
-  const H   = canvas.height;
-  canvas.width = W;
+  const W = canvas.width;
+  const H = canvas.height;
   ctx.clearRect(0, 0, W, H);
 
-  if(dados.length === 0) return;
+  if(dados.length < 2) return;
 
-  const maxVal = Math.max(...dados, 1);
-  const minVal = Math.min(...dados, 0);
-  const escala = v => H - ((v - minVal) / (maxVal - minVal || 1)) * H;
+  const maxVal = Math.max(...dados);
+  const minVal = Math.min(...dados);
+  const rng    = maxVal - minVal || 1;
+  const escala = v => H - 8 - ((v - minVal) / rng) * (H - 16);
 
-  // Linha dos dados
+  // grid
+  ctx.strokeStyle = '#f0f0f0';
+  ctx.lineWidth   = 1;
+  for(let i = 0; i <= 4; i++){
+    const y = 8 + (i / 4) * (H - 16);
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+  }
+
+  // linha com seta no final
   ctx.beginPath();
   ctx.strokeStyle = corLinha;
   ctx.lineWidth   = 2;
+  const step = W / (MAX_PTS - 1);
   dados.forEach((v, i) => {
-    const x = i * 5;
+    const x = i * step;
     const y = escala(v);
     i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
   });
   ctx.stroke();
 
-  // Escala lateral
-  ctx.fillStyle = '#666';
-  ctx.font = '11px sans-serif';
-  ctx.fillText(maxVal.toFixed(2), 4, 11);
-  ctx.fillText(minVal.toFixed(2), 4, H - 3);
+  // marcações no eixo X
+  if(intervaloX && dados.length > 1){
+    const totalPts     = dados.length;
+    const stepIntervalo = W / (MAX_PTS - 1);
+    ctx.fillStyle   = '#bbb';
+    ctx.font        = '10px sans-serif';
+    ctx.textAlign   = 'center';
+
+    const ptsPorIntervalo = intervaloX.pts;
+    for(let i = 0; i < totalPts; i += ptsPorIntervalo){
+      const x   = i * stepIntervalo;
+      const label = intervaloX.label(i, totalPts);
+      ctx.fillText(label, x, H - 2);
+    }
+    ctx.textAlign = 'left';
+  }
+
+  // seta no último ponto
+  if(dados.length > 1){
+    const x2 = (dados.length - 1) * step;
+    const y2 = escala(dados[dados.length - 1]);
+    const x1 = (dados.length - 2) * step;
+    const y1 = escala(dados[dados.length - 2]);
+    const ang = Math.atan2(y2 - y1, x2 - x1);
+    ctx.beginPath();
+    ctx.fillStyle = corLinha;
+    ctx.moveTo(x2, y2);
+    ctx.lineTo(x2 - 10 * Math.cos(ang - 0.4), y2 - 10 * Math.sin(ang - 0.4));
+    ctx.lineTo(x2 - 10 * Math.cos(ang + 0.4), y2 - 10 * Math.sin(ang + 0.4));
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  if(eixoYId) atualizarEixoY(eixoYId, minVal, maxVal);
+}
+
+// ===== MINMAX =====
+function minmax(arr){
+  if(!arr.length) return { min: 0, max: 0 };
+  return { min: Math.min(...arr), max: Math.max(...arr) };
+}
+
+function atualizarMinMax(){
+  const v5 = minmax(vibDados);
+  const t5 = minmax(tempDados);
+  document.getElementById('vib-max-5m').textContent  = v5.max.toFixed(2);
+  document.getElementById('vib-min-5m').textContent  = v5.min.toFixed(2);
+  document.getElementById('temp-max-5m').textContent = t5.max.toFixed(1);
+  document.getElementById('temp-min-5m').textContent = t5.min.toFixed(1);
+
+  if(vibHist.length){
+    const v24 = minmax(vibHist);
+    const t24 = minmax(tempHist);
+    document.getElementById('vib-max-24h').textContent  = v24.max.toFixed(2);
+    document.getElementById('vib-min-24h').textContent  = v24.min.toFixed(2);
+    document.getElementById('temp-max-24h').textContent = t24.max.toFixed(1);
+    document.getElementById('temp-min-24h').textContent = t24.min.toFixed(1);
+  }
 }
 
 // ===== LOOP TEMPO REAL (2s) =====
 let rodando = false;
-
 async function loop(){
   if(rodando) return;
   rodando = true;
-
   try{
     const r = await fetch('/data');
-    if(!r.ok) throw new Error(r.status);
     const d = await r.json();
-
     const vib  = d.vibAtual  ?? 0;
     const temp = d.tempAtual ?? 0;
 
-    document.getElementById('vib-valor').textContent  = vib.toFixed(2);
-    document.getElementById('temp-valor').textContent = temp.toFixed(1);
+    document.getElementById('vib-atual').textContent  = vib.toFixed(2);
+    document.getElementById('temp-atual').textContent = temp.toFixed(1);
 
-    vibDados.push(vib);
-    tempDados.push(temp);
+    
+    vibDados.push(vib);   tempDados.push(temp);
     if(vibDados.length  > MAX_PTS) vibDados.shift();
     if(tempDados.length > MAX_PTS) tempDados.shift();
 
-    desenhar(document.getElementById('vib'),  vibDados,  '#c0392b');
-    desenhar(document.getElementById('temp'), tempDados, '#2980b9');
-
-  } catch(e){
-    console.warn('Erro fetch /data:', e);
-  }
-
+    const ix5min = {
+      pts: 15,
+      label: (i, total) => {
+        const seg = (i * 2);
+        return seg < 60 ? seg + 's' : Math.floor(seg/60) + 'm';
+      }
+    };
+    desenhar(document.getElementById('vib'),  vibDados,  '#c0392b', 'ey-vib',  ix5min);
+    desenhar(document.getElementById('temp'), tempDados, '#2980b9', 'ey-temp', ix5min);
+    atualizarMinMax();
+  } catch(e){ console.warn('fetch /data:', e); }
   rodando = false;
   setTimeout(loop, 2000);
 }
@@ -194,43 +585,142 @@ async function loop(){
 async function loopHistorico(){
   try{
     const r = await fetch('/historico');
-    if(!r.ok) throw new Error(r.status);
     const d = await r.json();
+    vibHist  = d.vib  ?? [];
+    tempHist = d.temp ?? [];
 
-    vibHistDados  = d.vib  ?? [];
-    tempHistDados = d.temp ?? [];
+    // 288 pontos = 24h → 1 ponto a cada 5min → 12 pontos = 1h
+    const ix24h = {
+      pts: 12,
+      label: (i, total) => {
+        const horas = Math.floor((i * 5) / 60);
+        return horas + 'h';
+      }
+    };
 
-    desenhar(document.getElementById('vibHist'),  vibHistDados,  '#922b21');
-    desenhar(document.getElementById('tempHist'), tempHistDados, '#1a5276');
+    const cvH = document.getElementById('vibHist');
+    cvH.width = Math.max(600, vibHist.length * 5);
+    desenhar(cvH, vibHist, '#922b21', 'ey-vibH', ix24h);
 
-  } catch(e){
-    console.warn('Erro fetch /historico:', e);
-  }
+    const ctH = document.getElementById('tempHist');
+    ctH.width = Math.max(600, tempHist.length * 5);
+    desenhar(ctH, tempHist, '#1a5276', 'ey-tempH', ix24h);
 
+    atualizarMinMax();
+  } catch(e){ console.warn('fetch /historico:', e); }
   setTimeout(loopHistorico, 30000);
 }
 
-loop();
-loopHistorico();
+// ===== LOOP PERFORMANCE (5s) =====
+async function loopPerformance(){
+  try{
+    const r = await fetch('/performance');
+    const d = await r.json();
 
-// ===== WIFI =====
+    document.getElementById('p-heapLivre').textContent = d.heapLivre ?? '—';
+    document.getElementById('p-heapUsado').textContent = d.heapUsado ?? '—';
+    document.getElementById('p-sketch').textContent    = d.sketchUsado ?? '—';
+    document.getElementById('p-uptime').textContent    = d.uptime ?? '—';
+    document.getElementById('p-wifi').textContent      = d.wifiState ?? '—';
+    document.getElementById('p-rssi').textContent      = d.rssi ?? '—';
+    document.getElementById('t-fft').textContent       = d.tempoFFT ?? '—';
+    document.getElementById('t-arm').textContent       = d.tempoArmazenamento ?? '—';
+    document.getElementById('t-json').textContent      = d.tempoJSON ?? '—';
+    document.getElementById('t-temp').textContent      = d.tempoTemperatura ?? '—';
+    document.getElementById('t-wifi').textContent      = d.tempoWifi ?? '—';
+
+    // barra heap
+    const pctLivre = d.heapTotal ? (d.heapLivre / d.heapTotal * 100) : 0;
+    const pctUsado = d.heapTotal ? (d.heapUsado / d.heapTotal * 100) : 0;
+    const pctSketch = d.flashTotal ? (d.sketchUsado / d.flashTotal * 100) : 0;
+
+    document.getElementById('b-heap').style.width        = pctLivre.toFixed(0) + '%';
+    document.getElementById('b-heapUsado').style.width   = pctUsado.toFixed(0) + '%';
+    document.getElementById('p-heapLivrePct').textContent = pctLivre.toFixed(1);
+    document.getElementById('p-heapUsadoPct').textContent = pctUsado.toFixed(1);
+    document.getElementById('p-sketchPct').textContent    = pctSketch.toFixed(1);
+
+    // gráfico heap
+    heapDados.push(d.heapLivre ?? 0);
+    if(heapDados.length > 60) heapDados.shift();
+    desenhar(document.getElementById('heapChart'), heapDados, '#4fc3f7', 'ey-heap');
+
+  } catch(e){ console.warn('fetch /performance:', e); }
+  setTimeout(loopPerformance, 5000);
+}
+
+// ===== LOOP LOGS (3s) =====
+let ultimoLogTs = 0;
+async function loopLogs(){
+  try{
+    const r = await fetch('/logs');
+    const logs = await r.json();
+    const terminal = document.getElementById('terminal');
+    let html = '';
+    logs.forEach(l => {
+      const cor = l.n === 'E' ? 'log-E' : l.n === 'W' ? 'log-W' : 'log-I';
+      const nivel = l.n === 'E' ? 'ERRO' : l.n === 'W' ? 'WARN' : 'INFO';
+      const ts = (l.t / 1000).toFixed(1) + 's';
+      html += `<div class="log-linha ${cor}">[${ts}] [${nivel}] ${l.m}</div>`;
+    });
+    terminal.innerHTML = html;
+    terminal.scrollTop = terminal.scrollHeight;
+  } catch(e){ console.warn('fetch /logs:', e); }
+  setTimeout(loopLogs, 3000);
+}
+
+function exportarLogs(){
+  fetch('/logs').then(r => r.json()).then(logs => {
+    let txt = logs.map(l => {
+      const nivel = l.n === 'E' ? 'ERRO' : l.n === 'W' ? 'WARN' : 'INFO';
+      return `[${(l.t/1000).toFixed(1)}s] [${nivel}] ${l.m}`;
+    }).join('\n');
+    const a = document.createElement('a');
+    a.href = 'data:text/plain,' + encodeURIComponent(txt);
+    a.download = 'logs.txt';
+    a.click();
+  });
+}
+
+function limparLogs(){
+  fetch('/logs/limpar').then(() => {
+    document.getElementById('terminal').innerHTML = '';
+  });
+}
+
+// ===== CONFIGURAÇÕES =====
 async function salvarWifi(){
   const s  = document.getElementById('ssid').value.trim();
   const p  = document.getElementById('senha').value;
-  const st = document.getElementById('status-wifi');
-
+  const st = document.getElementById('status-config');
   if(!s){ st.textContent = 'Informe o SSID.'; return; }
-
   st.textContent = 'Salvando...';
   try{
-    const r = await fetch(
-      `/salvar?s=${encodeURIComponent(s)}&p=${encodeURIComponent(p)}`
-    );
+    const r = await fetch(`/salvar?s=${encodeURIComponent(s)}&p=${encodeURIComponent(p)}`);
     st.textContent = r.ok ? 'Salvo! Reconectando...' : 'Erro ao salvar.';
-  } catch(e){
-    st.textContent = 'Falha na requisição.';
-  }
+  } catch(e){ st.textContent = 'Falha na requisição.'; }
 }
+
+async function salvarFreq(){
+  const f  = document.getElementById('freq-input').value;
+  const st = document.getElementById('status-freq');
+  st.textContent = 'Aplicando...';
+  try{
+    const r = await fetch(`/config?freq=${f}`);
+    st.textContent = r.ok ? `Frequência alterada para ${f}Hz.` : 'Erro ao aplicar.';
+  } catch(e){ st.textContent = 'Falha na requisição.'; }
+}
+
+// ===== INIT =====
+loop();
+loopHistorico();
+loopPerformance();
+loopLogs();
+
+// carrega frequência atual
+fetch('/config').then(r => r.json()).then(d => {
+  if(d.freq) document.getElementById('freq-input').value = d.freq;
+}).catch(()=>{});
 </script>
 </body>
 </html>
