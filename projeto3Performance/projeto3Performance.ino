@@ -672,9 +672,9 @@ void atualizarLED(){
 
 // catodo comum: 0 = apagado, 255 = máximo brilho
 void setLED(int pinR, int pinG, int pinB, int r, int g, int b){
-  analogWrite(pinR, r);
-  analogWrite(pinG, g);
-  analogWrite(pinB, b);
+  analogWrite(pinR, 255 - r);
+  analogWrite(pinG, 255 - g);
+  analogWrite(pinB, 255 - b);
 }
 
 void atualizarLEDWifi(){
@@ -842,6 +842,10 @@ void setup(){
   pinMode(LED_PIN, OUTPUT);
   pinMode(LED_WIFI_R, OUTPUT); pinMode(LED_WIFI_G, OUTPUT); pinMode(LED_WIFI_B, OUTPUT);
   pinMode(LED_VIB_R,  OUTPUT); pinMode(LED_VIB_G,  OUTPUT); pinMode(LED_VIB_B,  OUTPUT);
+
+  // anodo comum: garante LEDs apagados no boot (LOW acenderia)
+  setLED(LED_WIFI_R, LED_WIFI_G, LED_WIFI_B, 0, 0, 0);
+  setLED(LED_VIB_R,  LED_VIB_G,  LED_VIB_B,  0, 0, 0);
 
   // recursos compartilhados
   filaProcessamento = xQueueCreate(20, sizeof(DadoSensor));
