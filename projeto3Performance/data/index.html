@@ -14,6 +14,7 @@ body { font-family: sans-serif; background: #f0f2f5; display: flex; min-height: 
   width: 180px; min-height: 100vh; background: #1a1a2e;
   display: flex; flex-direction: column; padding: 24px 0;
   position: fixed; top: 0; left: 0; z-index: 100;
+  transition: transform .25s ease;
 }
 #sidebar h1 {
   color: #fff; font-size: 14px; text-align: center;
@@ -32,6 +33,61 @@ body { font-family: sans-serif; background: #f0f2f5; display: flex; min-height: 
 /* ===== CONTEÚDO PRINCIPAL ===== */
 #conteudo {
   margin-left: 180px; flex: 1; padding: 24px;
+}
+
+/* ===== HAMBURGUER ===== */
+#btn-menu {
+  display: none; position: fixed; top: 12px; left: 12px;
+  z-index: 200; background: #1a1a2e; border: none;
+  color: #fff; font-size: 22px; cursor: pointer;
+  border-radius: 6px; padding: 4px 10px; line-height: 1;
+}
+#overlay {
+  display: none; position: fixed; inset: 0;
+  background: rgba(0,0,0,.4); z-index: 99;
+}
+
+/* ===== MOBILE ===== */
+@media (max-width: 900px){
+  #btn-menu  { display: block; }
+  #sidebar   { transform: translateX(-100%); }
+  #sidebar.aberto { transform: translateX(0); }
+  #overlay.visivel { display: block; }
+  #conteudo  { margin-left: 0; padding: 16px; padding-top: 52px; }
+
+  /* header: vibração e temperatura lado a lado na primeira linha,
+     5min e 24h embaixo ocupando toda a largura cada */
+  .dados-grid {
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: auto auto;
+  }
+  /* vibração atual — posição 1 */
+  .dados-grid .dado-bloco:nth-child(1) {
+    grid-column: 1; grid-row: 1;
+  }
+  /* temperatura atual — posição 2 */
+  .dados-grid .dado-bloco:nth-child(4) {
+    grid-column: 2; grid-row: 1;
+  }
+  /* últimos 5 min — largura total */
+  .dados-grid .dado-bloco:nth-child(2) {
+    grid-column: 1 / -1; grid-row: 2;
+  }
+  /* últimas 24h — largura total */
+  .dados-grid .dado-bloco:nth-child(3) {
+    grid-column: 1 / -1; grid-row: 3;
+  }
+
+  .graficos-5min     { grid-template-columns: 1fr !important; }
+  .perf-grid         { grid-template-columns: 1fr 1fr; }
+  .grupos-grid       { grid-template-columns: 1fr 1fr; }
+  .freq-grupos-grid  { grid-template-columns: 1fr 1fr; }
+
+  /* gráficos mobile — altura maior para compensar largura menor */
+  canvas { min-width: unset !important; width: 100% !important; }
+  .canvas-area { overflow-x: hidden; }
+  #vib  { height: 200px !important; }
+  #temp { height: 200px !important; }
 }
 
 /* ===== SEÇÕES ===== */
@@ -96,6 +152,9 @@ body { font-family: sans-serif; background: #f0f2f5; display: flex; min-height: 
 }
 .canvas-area { margin-left: 48px; margin-bottom: 20px; overflow-x: auto; }
 canvas { display: block; }
+#vib, #temp { height: 160px; }
+#vibHist, #tempHist { height: 160px; }
+#heapChart { height: 120px; }
 
 /* ===== PERFORMANCE ===== */
 .perf-grid {
@@ -239,6 +298,9 @@ input[type=text], input[type=password], input[type=number] {
 </head>
 <body>
 
+<button id="btn-menu" onclick="toggleMenu()">☰</button>
+<div id="overlay" onclick="fecharMenu()"></div>
+
 <!-- ===== MENU LATERAL ===== -->
 <nav id="sidebar">
   <h1>ESP MONITOR</h1>
@@ -314,7 +376,7 @@ input[type=text], input[type=password], input[type=number] {
         <div class="grafico-wrapper">
           <div class="eixo-y" id="ey-vib"></div>
           <div class="canvas-area">
-            <canvas id="vib" height="160" width="600"></canvas>
+            <canvas id="vib" height="200"></canvas>
           </div>
           <div class="eixo-x"><span>0</span><span id="ex-vib">5 min</span></div>
         </div>
@@ -326,14 +388,13 @@ input[type=text], input[type=password], input[type=number] {
           <span class="leg-item"><span class="leg-linha" style="background:#3a7bd5"></span>Vibração</span>
           <span class="leg-item"><span class="leg-linha leg-tracejado"></span>Mudança de grupo</span>
         </div>
-        </div>
       </div>
       <div class="card">
         <div class="card-titulo">Temperatura — 5 min (°C)</div>
         <div class="grafico-wrapper">
           <div class="eixo-y" id="ey-temp"></div>
           <div class="canvas-area">
-            <canvas id="temp" height="160" width="600"></canvas>
+            <canvas id="temp" height="200"></canvas>
           </div>
           <div class="eixo-x"><span>0</span><span id="ex-temp">5 min</span></div>
         </div>
@@ -434,8 +495,8 @@ input[type=text], input[type=password], input[type=number] {
           <tr><td>processarFFT()</td><td id="t-fft">—</td></tr>
           <tr><td>taskArmazenamento() — save</td><td id="t-arm">—</td></tr>
           <tr><td>gerarJSON()</td><td id="t-json">—</td></tr>
-          <tr><td>atualizarTemperatura()</td><td id="t-temp">—</td></tr>
-          <tr><td>gerenciarWiFi()</td><td id="t-wifi">—</td></tr>
+          <tr><td>gerarJSONHistorico()</td><td id="t-temp">—</td></tr>
+          <tr><td>coletarAmostraFFT()</td><td id="t-wifi">—</td></tr>
         </tbody>
       </table>
     </div>
@@ -658,6 +719,17 @@ function mostrar(sec, el){
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('ativo'));
   document.getElementById(sec).classList.add('ativa');
   if(el) el.classList.add('ativo');
+  fecharMenu();
+}
+
+function toggleMenu(){
+  document.getElementById('sidebar').classList.toggle('aberto');
+  document.getElementById('overlay').classList.toggle('visivel');
+}
+
+function fecharMenu(){
+  document.getElementById('sidebar').classList.remove('aberto');
+  document.getElementById('overlay').classList.remove('visivel');
 }
 
 // ===== DADOS =====
@@ -667,8 +739,8 @@ let vibHist   = [], tempHist   = [];
 let heapDados = [];
 
 // configuração de máquina
-let limAB = 1.12, limBC = 2.80, limCD = 7.10;
-let grupoAtual = 2;
+let limAB = 0.71, limBC = 1.80, limCD = 4.50;
+let grupoAtual = 1;
 
 // marcações de mudança de grupo nos gráficos
 // cada entrada: { indice: N, limAB, limBC, limCD }
@@ -676,29 +748,58 @@ let marcacoesRT  = []; // tempo real
 let marcacoesHist = []; // histórico
 
 // ===== EIXO Y =====
-function atualizarEixoY(elId, minVal, maxVal){
+function atualizarEixoY(elId, minVal, maxVal, fixo){
   const el = document.getElementById(elId);
   if(!el) return;
-  const mid = ((minVal + maxVal) / 2).toFixed(1);
-  el.innerHTML =
-    `<span>${maxVal.toFixed(1)}</span>` +
-    `<span>${mid}</span>` +
-    `<span>${minVal.toFixed(1)}</span>`;
+  if(fixo){
+    // escala fixa: mostra 20, 15, 10, 5, 0
+    el.innerHTML =
+      `<span>20</span>` +
+      `<span>15</span>` +
+      `<span>10</span>` +
+      `<span>5</span>` +
+      `<span>0</span>`;
+    el.style.justifyContent = 'space-between';
+  } else {
+    const mid = ((minVal + maxVal) / 2).toFixed(1);
+    el.innerHTML =
+      `<span>${maxVal.toFixed(1)}</span>` +
+      `<span>${mid}</span>` +
+      `<span>${minVal.toFixed(1)}</span>`;
+  }
 }
 
 // ===== DESENHO =====
+function getCanvasW(canvas){
+  // sobe na árvore até encontrar o card
+  let el = canvas.parentElement;
+  while(el && !el.classList.contains('card') && !el.classList.contains('canvas-area')){
+    el = el.parentElement;
+  }
+  const area = canvas.closest('.canvas-area');
+  if(area) return area.getBoundingClientRect().width || 600;
+  return canvas.parentElement.getBoundingClientRect().width || 600;
+}
+
 function desenhar(canvas, dados, corLinha, eixoYId, intervaloX, opcoesISO){
   const ctx = canvas.getContext('2d');
-  const W = canvas.width;
+  const W = getCanvasW(canvas);
+  canvas.width = W;
   const H = canvas.height;
   ctx.clearRect(0, 0, W, H);
 
   if(dados.length < 2) return;
 
-  const maxVal = Math.max(...dados);
-  const minVal = Math.min(...dados);
+  // se escala fixa fornecida via opcoesISO, usa ela; senão escala dinâmica
+  const fixMin = opcoesISO ? 0 : Math.min(...dados);
+  const fixMax = opcoesISO ? 20 : Math.max(...dados);
+  const maxVal = fixMax;
+  const minVal = fixMin;
   const rng    = maxVal - minVal || 1;
-  const escala = v => H - 8 - ((v - minVal) / rng) * (H - 16);
+  const escala = v => {
+    const vClamp = Math.min(Math.max(v, minVal), maxVal);
+    return H - 8 - ((vClamp - minVal) / rng) * (H - 16);
+  };
   const step   = W / (MAX_PTS - 1);
 
   // ===== FAIXAS DE COR ISO =====
@@ -738,12 +839,7 @@ function desenhar(canvas, dados, corLinha, eixoYId, intervaloX, opcoesISO){
     segmentos.push({ x1: xAtual, x2: W, ab: limAtual.ab, bc: limAtual.bc, cd: limAtual.cd });
 
     // desenha cada segmento
-    const escMax = v => {
-      const vMax = Math.max(maxVal, opcoesISO.limCD * 1.2);
-      return H - 8 - ((v - 0) / (vMax - 0 || 1)) * (H - 16);
-    };
-    const vMax = Math.max(maxVal, opcoesISO.limCD * 1.2);
-    const escZ = v => H - 8 - (v / (vMax || 1)) * (H - 16);
+    const escZ = v => H - 8 - ((v - fixMin) / (fixMax - fixMin || 1)) * (H - 16);
 
     for(const seg of segmentos){
       const largura = seg.x2 - seg.x1;
@@ -804,7 +900,7 @@ function desenhar(canvas, dados, corLinha, eixoYId, intervaloX, opcoesISO){
 
       ctx.fillStyle = 'rgba(0,0,0,0.7)';
       ctx.font = 'bold 9px sans-serif';
-      ctx.fillText('▼ G' + (grupoAtual), x + 2, 10);
+      ctx.fillText('▼ G' + (m.grupoNovo ?? '?'), x + 2, 10);
       ctx.restore();
     });
   }
@@ -839,7 +935,7 @@ function desenhar(canvas, dados, corLinha, eixoYId, intervaloX, opcoesISO){
     ctx.fill();
   }
 
-  if(eixoYId) atualizarEixoY(eixoYId, minVal, maxVal);
+  if(eixoYId) atualizarEixoY(eixoYId, minVal, maxVal, !!opcoesISO);
 }
 
 // ===== MINMAX =====
@@ -1075,13 +1171,15 @@ function selecionarGrupo(g){
         });
         // armazena posição como distância do final (quantos pontos atrás)
         marcacoesRT.push({
-          distFinal: 0,           // acabou de acontecer — está na ponta
+          distFinal: 0,
+          grupoNovo: g,              // ← grupo para qual foi mudado
           limABAntes: limAB,
           limBCAntes: limBC,
           limCDAntes: limCD
         });
         marcacoesHist.push({
           distFinal: 0,
+          grupoNovo: g,
           limABAntes: limAB,
           limBCAntes: limBC,
           limCDAntes: limCD
@@ -1110,6 +1208,19 @@ loop();
 loopHistorico();
 loopPerformance();
 loopLogs();
+
+// redesenha ao redimensionar
+window.addEventListener('resize', () => {
+  if(vibDados.length > 1){
+    const ix5min = {
+      pts: 15,
+      label: (i) => { const s = i*2; return s < 60 ? s+'s' : Math.floor(s/60)+'m'; }
+    };
+    const isoOpts = { limAB, limBC, limCD, marcacoes: marcacoesRT };
+    desenhar(document.getElementById('vib'),  vibDados,  '#3a7bd5', 'ey-vib',  ix5min, isoOpts);
+    desenhar(document.getElementById('temp'), tempDados, '#3a7bd5', 'ey-temp', ix5min, null);
+  }
+});
 
 // carrega frequência atual
 fetch('/config').then(r => r.json()).then(d => {

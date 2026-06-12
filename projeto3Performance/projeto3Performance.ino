@@ -72,7 +72,7 @@ const ConfigMaquina GRUPOS_ISO[4] = {
   {4, 2.80f, 7.10f, 18.00f}
 };
 
-ConfigMaquina configAtual = GRUPOS_ISO[1]; // padrão: Grupo II
+ConfigMaquina configAtual = GRUPOS_ISO[0]; // padrão: Grupo I
 
 // ===== MÉTRICAS DE TEMPO DE EXECUÇÃO =====
 volatile unsigned long tempoFFT          = 0;
@@ -266,7 +266,6 @@ void iniciarSTA(){
 }
 
 void gerenciarWiFi(){
-  unsigned long t0 = micros();
   wl_status_t status = WiFi.status();
 
   switch(wifiState){
@@ -309,7 +308,6 @@ void gerenciarWiFi(){
       break;
   }
 
-  tempoWifi = micros() - t0;
 }
 
 void handleSalvar(AsyncWebServerRequest *request){
@@ -348,6 +346,8 @@ void coletarAmostraFFT(){
 
   if(!deve) return;
 
+  unsigned long t0 = micros();
+
   sensors_event_t event;
   if(!accel.getEvent(&event)) return;
 
@@ -365,6 +365,7 @@ void coletarAmostraFFT(){
     sampleIndex = 0;
     fftReady = true;
   }
+  tempoWifi = micros() - t0;
 }
 
 void processarFFT(float tempAtual){
@@ -418,7 +419,6 @@ void processarFFT(float tempAtual){
 }
 
 void atualizarTemperatura(float &tempAtual){
-  unsigned long t0 = micros();
   if(!aguardandoTemp && millis() - ultimoTempRequest >= 1000){
     sensors.requestTemperatures();
     aguardandoTemp = true;
@@ -432,7 +432,6 @@ void atualizarTemperatura(float &tempAtual){
     }
     aguardandoTemp = false;
   }
-  tempoTemperatura = micros() - t0;
 }
 
 
@@ -545,7 +544,7 @@ String gerarJSON(){
     cfg = configAtual;
     xSemaphoreGive(configMutex);
   } else {
-    cfg = GRUPOS_ISO[1]; // fallback Grupo II
+    cfg = GRUPOS_ISO[0]; // fallback Grupo I
   }
 
   const char* zona = "A";
@@ -569,6 +568,7 @@ String gerarJSON(){
 static char jsonHistBuffer[12288];
 
 String gerarJSONHistorico(){
+  unsigned long t0 = micros();
   memset(jsonHistBuffer, 0, sizeof(jsonHistBuffer));
   int len = 0;
 
@@ -595,6 +595,7 @@ String gerarJSONHistorico(){
     xSemaphoreGive(historicoMutex);
   }
 
+  tempoTemperatura = micros() - t0;
   return String(jsonHistBuffer);
 }
 
@@ -956,6 +957,23 @@ void setup(){
     carregarHistorico();
     carregarConfigMaquina();
 
+    // carrega frequência salva
+    if(xSemaphoreTake(fsMutex, pdMS_TO_TICKS(500))){
+      File ff = LittleFS.open("/freq.txt", "r");
+      if(ff){
+        int f = ff.readStringUntil('\n').toInt();
+        if(f >= 10 && f <= 2000){
+          samplingFrequency = f;
+          timerAlarm(timer, 1000000 / f, true, 0);
+          char logMsg[MAX_LOG_MSG];
+          snprintf(logMsg, sizeof(logMsg), "Frequencia carregada: %dHz.", f);
+          registrarLog('I', logMsg);
+        }
+        ff.close();
+      }
+      xSemaphoreGive(fsMutex);
+    }
+
     // estima tempo desligado pelo último timestamp do histórico
     if(historicoCount > 0){
       int ultimoIdx = (historicoInicio + historicoCount - 1) % MAX_HISTORICO_RAM;
@@ -1024,6 +1042,14 @@ void setup(){
       if(f >= 10 && f <= 2000){
         samplingFrequency = f;
         timerAlarm(timer, 1000000 / f, true, 0);
+
+        // salva na flash
+        if(xSemaphoreTake(fsMutex, pdMS_TO_TICKS(500))){
+          File ff = LittleFS.open("/freq.txt", "w");
+          if(ff){ ff.println(f); ff.close(); }
+          xSemaphoreGive(fsMutex);
+        }
+
         char logMsg[MAX_LOG_MSG];
         snprintf(logMsg, sizeof(logMsg), "Frequencia alterada para %dHz.", f);
         registrarLog('I', logMsg);
