@@ -153,6 +153,88 @@ input[type=text], input[type=password], input[type=number] {
 .changelog-item .version { font-weight: bold; font-size: 13px; color: #1a1a2e; }
 .changelog-item .date { font-size: 11px; color: #888; }
 .changelog-item ul { margin-top: 4px; }
+
+
+.legenda-grafico {
+  display: flex; flex-wrap: wrap; gap: 12px;
+  padding: 8px 0 4px 48px; font-size: 11px; color: #666;
+}
+.leg-item { display: flex; align-items: center; gap: 4px; }
+.leg-cor {
+  width: 14px; height: 10px; border-radius: 2px; display: inline-block;
+}
+.leg-linha {
+  width: 20px; height: 2px; background: #3a7bd5; display: inline-block;
+}
+.leg-tracejado {
+  background: none;
+  border-top: 2px dashed rgba(0,0,0,0.6);
+  width: 20px; height: 0;
+}
+
+.zona-badge {
+  display: inline-block; padding: 2px 10px; border-radius: 10px;
+  font-size: 11px; font-weight: bold;
+}
+.zona-A { background: rgba(80,180,80,0.3);  color: #2d6a2d; }
+.zona-B { background: rgba(210,190,60,0.3); color: #7a6a00; }
+.zona-C { background: rgba(220,140,60,0.3); color: #7a3a00; }
+.zona-D { background: rgba(200,80,80,0.3);  color: #7a0000; }
+
+.aviso-iso {
+  background: #f8f9fa; border-left: 3px solid #4fc3f7;
+  padding: 10px 14px; border-radius: 4px; font-size: 13px;
+  color: #555; margin-bottom: 16px; line-height: 1.6;
+}
+.aviso-iso a { color: #4fc3f7; }
+
+.grupos-grid {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;
+  margin-bottom: 8px;
+}
+.grupo-card {
+  border: 2px solid #e0e0e0; border-radius: 8px; padding: 12px 8px;
+  cursor: pointer; transition: all .2s; text-align: center;
+  position: relative;
+}
+.grupo-card:hover { border-color: #4fc3f7; background: #f0fbff; }
+.grupo-card.selecionado { border-color: #1a1a2e; background: #f0fbff; }
+.grupo-num { font-weight: bold; font-size: 14px; color: #1a1a2e; margin-bottom: 4px; }
+.grupo-desc { font-size: 12px; color: #444; margin-bottom: 8px; line-height: 1.4; }
+.grupo-desc span { font-size: 11px; color: #888; }
+.grupo-limites { display: flex; flex-direction: column; gap: 3px; font-size: 11px; }
+.lim-a { background: rgba(80,180,80,0.2);  border-radius: 3px; padding: 1px 4px; }
+.lim-b { background: rgba(210,190,60,0.2); border-radius: 3px; padding: 1px 4px; }
+.lim-c { background: rgba(220,140,60,0.2); border-radius: 3px; padding: 1px 4px; }
+.lim-d { background: rgba(200,80,80,0.2);  border-radius: 3px; padding: 1px 4px; }
+.grupo-hint { font-size: 10px; color: #aaa; margin-top: 4px; }
+
+@media (max-width: 600px){
+  .grupos-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+.freq-grupos-grid {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;
+  margin-bottom: 8px;
+}
+.freq-grupo-card {
+  border: 1px solid #e0e0e0; border-radius: 8px; padding: 12px 8px;
+  text-align: center; background: #fafafa;
+}
+.freq-grupo-titulo { font-weight: bold; font-size: 13px; color: #1a1a2e; margin-bottom: 4px; }
+.freq-grupo-desc   { font-size: 11px; color: #666; margin-bottom: 8px; line-height: 1.4; }
+.freq-grupo-faixa  { font-size: 11px; color: #888; margin-bottom: 6px; line-height: 1.6; }
+.freq-grupo-rec    { font-size: 11px; color: #333; margin-bottom: 8px; line-height: 1.6; }
+.btn-freq {
+  padding: 5px 10px; border: none; border-radius: 4px;
+  background: #1a1a2e; color: #fff; cursor: pointer; font-size: 11px;
+}
+.btn-freq:hover { background: #2a2a4e; }
+
+@media (max-width: 600px){
+  .freq-grupos-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
 </style>
 </head>
 <body>
@@ -191,6 +273,9 @@ input[type=text], input[type=password], input[type=number] {
           <div class="label">Vibração Atual</div>
           <div class="valor-principal" id="vib-atual">—</div>
           <div class="unidade">mm/s RMS</div>
+          <div style="margin-top:6px">
+            <span id="zona-badge" class="zona-badge zona-A">Zona A</span>
+          </div>
         </div>
 
         <div class="dado-bloco">
@@ -233,6 +318,15 @@ input[type=text], input[type=password], input[type=number] {
           </div>
           <div class="eixo-x"><span>0</span><span id="ex-vib">5 min</span></div>
         </div>
+        <div class="legenda-grafico">
+          <span class="leg-item"><span class="leg-cor" style="background:rgba(80,180,80,0.5)"></span>Zona A</span>
+          <span class="leg-item"><span class="leg-cor" style="background:rgba(210,190,60,0.5)"></span>Zona B</span>
+          <span class="leg-item"><span class="leg-cor" style="background:rgba(220,140,60,0.5)"></span>Zona C</span>
+          <span class="leg-item"><span class="leg-cor" style="background:rgba(200,80,80,0.5)"></span>Zona D</span>
+          <span class="leg-item"><span class="leg-linha" style="background:#3a7bd5"></span>Vibração</span>
+          <span class="leg-item"><span class="leg-linha leg-tracejado"></span>Mudança de grupo</span>
+        </div>
+        </div>
       </div>
       <div class="card">
         <div class="card-titulo">Temperatura — 5 min (°C)</div>
@@ -255,6 +349,14 @@ input[type=text], input[type=password], input[type=number] {
           <canvas id="vibHist" height="160" style="min-width:600px"></canvas>
         </div>
         <div class="eixo-x"><span>24h atrás</span><span>Agora</span></div>
+      </div>
+      <div class="legenda-grafico">
+        <span class="leg-item"><span class="leg-cor" style="background:rgba(80,180,80,0.5)"></span>Zona A</span>
+        <span class="leg-item"><span class="leg-cor" style="background:rgba(210,190,60,0.5)"></span>Zona B</span>
+        <span class="leg-item"><span class="leg-cor" style="background:rgba(220,140,60,0.5)"></span>Zona C</span>
+        <span class="leg-item"><span class="leg-cor" style="background:rgba(200,80,80,0.5)"></span>Zona D</span>
+        <span class="leg-item"><span class="leg-linha" style="background:#3a7bd5"></span>Vibração</span>
+        <span class="leg-item"><span class="leg-linha leg-tracejado"></span>Mudança de grupo</span>
       </div>
     </div>
 
@@ -366,6 +468,95 @@ input[type=text], input[type=password], input[type=number] {
   <!-- ===== CONFIGURAÇÕES ===== -->
   <section id="config" class="secao">
     <div class="card">
+      <div class="card-titulo">Grupo de Máquina — ISO 10816-3</div>
+
+      <div class="aviso-iso">
+        <strong>Como identificar seu grupo:</strong> o grupo depende da potência
+        e do tipo de fundação da máquina, não apenas do tamanho.
+        <a href="https://www.iso.org/standard/51832.html" target="_blank">
+          Referência: ISO 10816-3 ↗
+        </a>
+      </div>
+
+      <div class="grupos-grid">
+
+        <div class="grupo-card" data-grupo="1"
+             onclick="selecionarGrupo(1)"
+             title="Motores elétricos pequenos • Pequenas bombas centrífugas • Ventiladores de pequeno porte • Exaustores compactos • Pequenos redutores">
+          <div class="grupo-num">Grupo I</div>
+          <div class="grupo-desc">Máquinas pequenas<br><span>até ~15 kW</span></div>
+          <div class="grupo-limites">
+            <span class="lim-a">A &lt; 0,71</span>
+            <span class="lim-b">B até 1,80</span>
+            <span class="lim-c">C até 4,50</span>
+            <span class="lim-d">D &gt; 4,50</span>
+          </div>
+          <div class="grupo-hint">mm/s RMS</div>
+        </div>
+
+        <div class="grupo-card" data-grupo="2"
+             onclick="selecionarGrupo(2)"
+             title="Motores elétricos industriais médios • Bombas de processo • Ventiladores industriais médios • Compressores de pequeno/médio porte • Sopradores industriais">
+          <div class="grupo-num">Grupo II</div>
+          <div class="grupo-desc">Máquinas médias<br><span>15–75 kW, base rígida</span></div>
+          <div class="grupo-limites">
+            <span class="lim-a">A &lt; 1,12</span>
+            <span class="lim-b">B até 2,80</span>
+            <span class="lim-c">C até 7,10</span>
+            <span class="lim-d">D &gt; 7,10</span>
+          </div>
+          <div class="grupo-hint">mm/s RMS</div>
+        </div>
+
+        <div class="grupo-card" data-grupo="3"
+             onclick="selecionarGrupo(3)"
+             title="Motores acima de 75kW • Grandes bombas centrífugas • Ventiladores pesados • Compressores industriais • Equipamentos de refinaria • Máquinas de papel e celulose">
+          <div class="grupo-num">Grupo III</div>
+          <div class="grupo-desc">Máquinas grandes<br><span>&gt;75 kW, fundação rígida</span></div>
+          <div class="grupo-limites">
+            <span class="lim-a">A &lt; 1,80</span>
+            <span class="lim-b">B até 4,50</span>
+            <span class="lim-c">C até 11,20</span>
+            <span class="lim-d">D &gt; 11,20</span>
+          </div>
+          <div class="grupo-hint">mm/s RMS</div>
+        </div>
+
+        <div class="grupo-card" data-grupo="4"
+             onclick="selecionarGrupo(4)"
+             title="Ventiladores em estruturas metálicas • Compressores em plataformas • Máquinas em mezaninos • Equipamentos offshore • Máquinas em bases com isoladores">
+          <div class="grupo-num">Grupo IV</div>
+          <div class="grupo-desc">Máquinas grandes<br><span>&gt;75 kW, fundação flexível</span></div>
+          <div class="grupo-limites">
+            <span class="lim-a">A &lt; 2,80</span>
+            <span class="lim-b">B até 7,10</span>
+            <span class="lim-c">C até 18,00</span>
+            <span class="lim-d">D &gt; 18,00</span>
+          </div>
+          <div class="grupo-hint">mm/s RMS</div>
+        </div>
+
+      </div>
+
+      <div class="aviso-iso" style="margin-top:12px;font-size:12px;color:#888">
+        ⚠️ Na dúvida entre Grupo III e IV, o critério decisivo é a
+        <strong>rigidez da fundação</strong>, não a potência da máquina.
+      </div>
+
+      <div id="status-maquina" style="font-size:13px;color:#555;margin-top:10px"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-titulo">Temperatura</div>
+      <div class="aviso-iso">
+        ⚠️ Não existe uma classificação universal de temperatura equivalente
+        à ISO 10816 para vibração. Os limites de temperatura variam conforme
+        o fabricante, tipo de rolamento, lubrificante utilizado e condições
+        de operação específicas de cada máquina. Consulte o manual do
+        equipamento ou o fabricante para obter os limites adequados.
+      </div>
+    </div>
+    <div class="card">
       <div class="card-titulo">Wi-Fi</div>
       <label>SSID<input type="text" id="ssid" placeholder="Nome da rede"></label>
       <label>Senha<input type="password" id="senha" placeholder="Senha"></label>
@@ -374,11 +565,44 @@ input[type=text], input[type=password], input[type=number] {
     </div>
     <div class="card">
       <div class="card-titulo">Frequência de amostragem</div>
-      <label>Frequência (Hz) — mín 10, máx 200
-        <input type="number" id="freq-input" min="10" max="200" value="100">
-      </label>
-      <button class="btn" onclick="salvarFreq()">Aplicar</button>
-      <div id="status-freq"></div>
+
+      <div class="aviso-iso" style="margin-bottom:16px">
+        A frequência de amostragem define a faixa de vibração que o sensor consegue
+        capturar. Pelo teorema de Nyquist, a faixa capturada é metade da frequência
+        configurada — ex: 800 Hz de amostragem captura até 400 Hz de vibração.
+        Frequências mais altas aumentam o consumo de CPU e memória.
+      </div>
+
+      <div class="freq-grupos-grid">
+        <div class="freq-grupo-card">
+          <div class="freq-grupo-titulo">Grupo I</div>
+          <div class="freq-grupo-rec"><b>800 Hz</b></div>
+          <button class="btn-freq" onclick="aplicarFreqSugerida(800)">Usar</button>
+        </div>
+        <div class="freq-grupo-card">
+          <div class="freq-grupo-titulo">Grupo II</div>
+          <div class="freq-grupo-rec"><b>1000 Hz</b></div>
+          <button class="btn-freq" onclick="aplicarFreqSugerida(1000)">Usar</button>
+        </div>
+        <div class="freq-grupo-card">
+          <div class="freq-grupo-titulo">Grupo III</div>
+          <div class="freq-grupo-rec"><b>1600 Hz</b></div>
+          <button class="btn-freq" onclick="aplicarFreqSugerida(1600)">Usar</button>
+        </div>
+        <div class="freq-grupo-card">
+          <div class="freq-grupo-titulo">Grupo IV</div>
+          <div class="freq-grupo-rec"><b>1000 Hz</b></div>
+          <button class="btn-freq" onclick="aplicarFreqSugerida(1000)">Usar</button>
+        </div>
+      </div>
+
+      <div style="margin-top:16px">
+        <label>Frequência personalizada (Hz) — mín 10, máx 2000
+          <input type="number" id="freq-input" min="10" max="2000" value="800">
+        </label>
+        <button class="btn" onclick="salvarFreq()">Aplicar</button>
+        <div id="status-freq"></div>
+      </div>
     </div>
   </section>
 
@@ -442,6 +666,15 @@ let vibDados  = [], tempDados  = [];
 let vibHist   = [], tempHist   = [];
 let heapDados = [];
 
+// configuração de máquina
+let limAB = 1.12, limBC = 2.80, limCD = 7.10;
+let grupoAtual = 2;
+
+// marcações de mudança de grupo nos gráficos
+// cada entrada: { indice: N, limAB, limBC, limCD }
+let marcacoesRT  = []; // tempo real
+let marcacoesHist = []; // histórico
+
 // ===== EIXO Y =====
 function atualizarEixoY(elId, minVal, maxVal){
   const el = document.getElementById(elId);
@@ -454,7 +687,7 @@ function atualizarEixoY(elId, minVal, maxVal){
 }
 
 // ===== DESENHO =====
-function desenhar(canvas, dados, corLinha, eixoYId, intervaloX){
+function desenhar(canvas, dados, corLinha, eixoYId, intervaloX, opcoesISO){
   const ctx = canvas.getContext('2d');
   const W = canvas.width;
   const H = canvas.height;
@@ -466,8 +699,75 @@ function desenhar(canvas, dados, corLinha, eixoYId, intervaloX){
   const minVal = Math.min(...dados);
   const rng    = maxVal - minVal || 1;
   const escala = v => H - 8 - ((v - minVal) / rng) * (H - 16);
+  const step   = W / (MAX_PTS - 1);
 
-  // grid
+  // ===== FAIXAS DE COR ISO =====
+  if(opcoesISO){
+    const total = dados.length;
+
+    // monta lista de segmentos: cada segmento tem xInicio, xFim e seus limites
+    // começa com os limites atuais e vai inserindo quebras onde há marcações
+    let segmentos = [];
+
+    // marcações ordenadas por distFinal decrescente (mais antigas primeiro)
+    const marcOrdenadas = [...(opcoesISO.marcacoes || [])]
+      .sort((a, b) => b.distFinal - a.distFinal);
+
+    let xAtual = 0;
+    let limAtual = {
+      ab: opcoesISO.limAB,
+      bc: opcoesISO.limBC,
+      cd: opcoesISO.limCD
+    };
+
+    // para cada marcação, o segmento antes dela tinha os limites antigos
+    for(const m of marcOrdenadas){
+      // posição X da marcação no canvas
+      const idxMarcacao = total - m.distFinal;
+      const xMarca = Math.max(0, idxMarcacao * step);
+
+      if(xMarca > xAtual){
+        segmentos.push({
+          x1: xAtual, x2: xMarca,
+          ab: m.limABAntes, bc: m.limBCAntes, cd: m.limCDAntes
+        });
+      }
+      xAtual = xMarca;
+    }
+    // segmento final com limites atuais
+    segmentos.push({ x1: xAtual, x2: W, ab: limAtual.ab, bc: limAtual.bc, cd: limAtual.cd });
+
+    // desenha cada segmento
+    const escMax = v => {
+      const vMax = Math.max(maxVal, opcoesISO.limCD * 1.2);
+      return H - 8 - ((v - 0) / (vMax - 0 || 1)) * (H - 16);
+    };
+    const vMax = Math.max(maxVal, opcoesISO.limCD * 1.2);
+    const escZ = v => H - 8 - (v / (vMax || 1)) * (H - 16);
+
+    for(const seg of segmentos){
+      const largura = seg.x2 - seg.x1;
+      if(largura <= 0) continue;
+
+      // zona A — verde suave
+      ctx.fillStyle = 'rgba(80,180,80,0.18)';
+      ctx.fillRect(seg.x1, escZ(seg.ab), largura, H - escZ(seg.ab));
+
+      // zona B — amarelo suave
+      ctx.fillStyle = 'rgba(210,190,60,0.18)';
+      ctx.fillRect(seg.x1, escZ(seg.bc), largura, escZ(seg.ab) - escZ(seg.bc));
+
+      // zona C — laranja suave
+      ctx.fillStyle = 'rgba(220,140,60,0.18)';
+      ctx.fillRect(seg.x1, escZ(seg.cd), largura, escZ(seg.bc) - escZ(seg.cd));
+
+      // zona D — vermelho suave
+      ctx.fillStyle = 'rgba(200,80,80,0.18)';
+      ctx.fillRect(seg.x1, 0, largura, escZ(seg.cd));
+    }
+  }
+
+  // ===== GRID =====
   ctx.strokeStyle = '#f0f0f0';
   ctx.lineWidth   = 1;
   for(let i = 0; i <= 4; i++){
@@ -475,11 +775,10 @@ function desenhar(canvas, dados, corLinha, eixoYId, intervaloX){
     ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
   }
 
-  // linha com seta no final
+  // ===== LINHA DOS DADOS =====
   ctx.beginPath();
   ctx.strokeStyle = corLinha;
   ctx.lineWidth   = 2;
-  const step = W / (MAX_PTS - 1);
   dados.forEach((v, i) => {
     const x = i * step;
     const y = escala(v);
@@ -487,24 +786,44 @@ function desenhar(canvas, dados, corLinha, eixoYId, intervaloX){
   });
   ctx.stroke();
 
-  // marcações no eixo X
-  if(intervaloX && dados.length > 1){
-    const totalPts     = dados.length;
-    const stepIntervalo = W / (MAX_PTS - 1);
-    ctx.fillStyle   = '#bbb';
-    ctx.font        = '10px sans-serif';
-    ctx.textAlign   = 'center';
+  // ===== MARCAÇÕES VERTICAIS =====
+  if(opcoesISO && opcoesISO.marcacoes){
+    opcoesISO.marcacoes.forEach(m => {
+      const idxMarcacao = dados.length - m.distFinal;
+      if(idxMarcacao < 0 || idxMarcacao >= dados.length) return;
+      const x = idxMarcacao * step;
 
-    const ptsPorIntervalo = intervaloX.pts;
-    for(let i = 0; i < totalPts; i += ptsPorIntervalo){
-      const x   = i * stepIntervalo;
-      const label = intervaloX.label(i, totalPts);
-      ctx.fillText(label, x, H - 2);
+      ctx.save();
+      ctx.setLineDash([4, 4]);
+      ctx.strokeStyle = 'rgba(0,0,0,0.7)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(x, 0); ctx.lineTo(x, H);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      ctx.fillStyle = 'rgba(0,0,0,0.7)';
+      ctx.font = 'bold 9px sans-serif';
+      ctx.fillText('▼ G' + (grupoAtual), x + 2, 10);
+      ctx.restore();
+    });
+  }
+
+  // ===== MARCAÇÕES EIXO X =====
+  if(intervaloX && dados.length > 1){
+    const totalPts = dados.length;
+    const stepIntervalo = W / (MAX_PTS - 1);
+    ctx.fillStyle  = '#bbb';
+    ctx.font       = '10px sans-serif';
+    ctx.textAlign  = 'center';
+    for(let i = 0; i < totalPts; i += intervaloX.pts){
+      const x = i * stepIntervalo;
+      ctx.fillText(intervaloX.label(i, totalPts), x, H - 2);
     }
     ctx.textAlign = 'left';
   }
 
-  // seta no último ponto
+  // ===== SETA NO ÚLTIMO PONTO =====
   if(dados.length > 1){
     const x2 = (dados.length - 1) * step;
     const y2 = escala(dados[dados.length - 1]);
@@ -561,6 +880,30 @@ async function loop(){
     document.getElementById('vib-atual').textContent  = vib.toFixed(2);
     document.getElementById('temp-atual').textContent = temp.toFixed(1);
 
+    if(d.grupo && d.grupo !== grupoAtual){
+      marcacoesRT.push({
+        distFinal: 0,
+        limABAntes: limAB,
+        limBCAntes: limBC,
+        limCDAntes: limCD
+      });
+      grupoAtual = d.grupo;
+    }
+    if(d.limAB) limAB = d.limAB;
+    if(d.limBC) limBC = d.limBC;
+    if(d.limCD) limCD = d.limCD;
+
+    // avança distFinal de todas as marcações RT a cada novo ponto
+    marcacoesRT.forEach(m => m.distFinal++);
+    // remove marcações que saíram da janela
+    marcacoesRT = marcacoesRT.filter(m => m.distFinal <= MAX_PTS);
+
+    // badge de zona
+    const zonaBadge = document.getElementById('zona-badge');
+    if(zonaBadge){
+      zonaBadge.textContent = 'Zona ' + (d.zona ?? '—');
+      zonaBadge.className   = 'zona-badge zona-' + (d.zona ?? 'A');
+    }
     
     vibDados.push(vib);   tempDados.push(temp);
     if(vibDados.length  > MAX_PTS) vibDados.shift();
@@ -573,8 +916,9 @@ async function loop(){
         return seg < 60 ? seg + 's' : Math.floor(seg/60) + 'm';
       }
     };
-    desenhar(document.getElementById('vib'),  vibDados,  '#c0392b', 'ey-vib',  ix5min);
-    desenhar(document.getElementById('temp'), tempDados, '#2980b9', 'ey-temp', ix5min);
+    const isoOpts = { limAB, limBC, limCD, marcacoes: marcacoesRT };
+    desenhar(document.getElementById('vib'),  vibDados,  '#3a7bd5', 'ey-vib',  ix5min, isoOpts);
+    desenhar(document.getElementById('temp'), tempDados, '#3a7bd5', 'ey-temp', ix5min, null);
     atualizarMinMax();
   } catch(e){ console.warn('fetch /data:', e); }
   rodando = false;
@@ -598,13 +942,15 @@ async function loopHistorico(){
       }
     };
 
+    const isoOptsH = { limAB, limBC, limCD, marcacoes: marcacoesHist };
+
     const cvH = document.getElementById('vibHist');
     cvH.width = Math.max(600, vibHist.length * 5);
-    desenhar(cvH, vibHist, '#922b21', 'ey-vibH', ix24h);
+    desenhar(cvH, vibHist,  '#3a7bd5', 'ey-vibH',  ix24h, isoOptsH);
 
     const ctH = document.getElementById('tempHist');
     ctH.width = Math.max(600, tempHist.length * 5);
-    desenhar(ctH, tempHist, '#1a5276', 'ey-tempH', ix24h);
+    desenhar(ctH, tempHist, '#3a7bd5', 'ey-tempH', ix24h, null);
 
     atualizarMinMax();
   } catch(e){ console.warn('fetch /historico:', e); }
@@ -710,6 +1056,54 @@ async function salvarFreq(){
     st.textContent = r.ok ? `Frequência alterada para ${f}Hz.` : 'Erro ao aplicar.';
   } catch(e){ st.textContent = 'Falha na requisição.'; }
 }
+
+function aplicarFreqSugerida(f){
+  document.getElementById('freq-input').value = f;
+  salvarFreq();
+}
+
+// ===== GRUPO DE MÁQUINA =====
+function selecionarGrupo(g){
+  const st = document.getElementById('status-maquina');
+  st.textContent = 'Salvando...';
+  fetch(`/maquina?grupo=${g}`)
+    .then(r => {
+      if(r.ok){
+        grupoAtual = g;
+        document.querySelectorAll('.grupo-card').forEach(c => {
+          c.classList.toggle('selecionado', parseInt(c.dataset.grupo) === g);
+        });
+        // armazena posição como distância do final (quantos pontos atrás)
+        marcacoesRT.push({
+          distFinal: 0,           // acabou de acontecer — está na ponta
+          limABAntes: limAB,
+          limBCAntes: limBC,
+          limCDAntes: limCD
+        });
+        marcacoesHist.push({
+          distFinal: 0,
+          limABAntes: limAB,
+          limBCAntes: limBC,
+          limCDAntes: limCD
+        });
+        st.textContent = `Grupo ${g} selecionado e salvo.`;
+      } else {
+        st.textContent = 'Erro ao salvar.';
+      }
+    })
+    .catch(() => { st.textContent = 'Falha na requisição.'; });
+}
+
+// carrega grupo atual no boot da página
+fetch('/maquina').then(r => r.json()).then(d => {
+  if(d.grupo){
+    grupoAtual = d.grupo;
+    limAB = d.limAB; limBC = d.limBC; limCD = d.limCD;
+    document.querySelectorAll('.grupo-card').forEach(c => {
+      c.classList.toggle('selecionado', parseInt(c.dataset.grupo) === d.grupo);
+    });
+  }
+}).catch(() => {});
 
 // ===== INIT =====
 loop();

@@ -2,9 +2,9 @@
 #define FFT_SPEED_OVER_PRECISION
 #define LED_PIN 2
 #define ONE_WIRE_BUS 4
-#define SAMPLES 64
+#define SAMPLES 256
 // frequência configurável (padrão 100Hz, mínimo 10, máximo 200)
-int samplingFrequency = 100;
+int samplingFrequency = 800;
 #define MAX_HISTORICO 288
 
 
@@ -56,6 +56,24 @@ int historicoCount = 0;      // quantos slots preenchidos
 int historicoInicio = 0;     // índice do mais antigo (buffer circular)
 SemaphoreHandle_t historicoMutex;
 
+// ===== CONFIGURAÇÃO DE MÁQUINA =====
+typedef struct {
+  int grupo;           // 1, 2, 3 ou 4
+  float limAB;         // limite zona A/B
+  float limBC;         // limite zona B/C
+  float limCD;         // limite zona C/D
+} ConfigMaquina;
+
+// limites ISO 10816-3 por grupo
+const ConfigMaquina GRUPOS_ISO[4] = {
+  {1, 0.71f, 1.80f,  4.50f},
+  {2, 1.12f, 2.80f,  7.10f},
+  {3, 1.80f, 4.50f, 11.20f},
+  {4, 2.80f, 7.10f, 18.00f}
+};
+
+ConfigMaquina configAtual = GRUPOS_ISO[1]; // padrão: Grupo II
+
 // ===== MÉTRICAS DE TEMPO DE EXECUÇÃO =====
 volatile unsigned long tempoFFT          = 0;
 volatile unsigned long tempoArmazenamento = 0;
@@ -103,6 +121,7 @@ QueueHandle_t filaLeitura;
 
 // ===== MUTEXES =====
 SemaphoreHandle_t fsMutex;
+SemaphoreHandle_t configMutex;
 
 
 // ===== SERVIDOR =====
@@ -140,7 +159,7 @@ bool aguardandoTemp = false;
 
 
 // ===== BUFFERS HTTP =====
-static char jsonBuffer[128];
+static char jsonBuffer[256];
 static char csvBuffer[8192];
 
 
@@ -183,6 +202,37 @@ void carregarWiFi(){
     if(f){
       ssidSalvo  = f.readStringUntil('\n'); ssidSalvo.trim();
       senhaSalva = f.readStringUntil('\n'); senhaSalva.trim();
+      f.close();
+    }
+    xSemaphoreGive(fsMutex);
+  }
+}
+
+void salvarConfigMaquina(int grupo){
+  if(xSemaphoreTake(fsMutex, pdMS_TO_TICKS(500))){
+    File f = LittleFS.open("/maquina.txt", "w");
+    if(f){
+      f.println(grupo);
+      f.close();
+    }
+    xSemaphoreGive(fsMutex);
+  }
+}
+
+void carregarConfigMaquina(){
+  if(xSemaphoreTake(fsMutex, pdMS_TO_TICKS(500))){
+    File f = LittleFS.open("/maquina.txt", "r");
+    if(f){
+      int g = f.readStringUntil('\n').toInt();
+      if(g >= 1 && g <= 4){
+        if(xSemaphoreTake(configMutex, pdMS_TO_TICKS(500))){
+          configAtual = GRUPOS_ISO[g - 1];
+          xSemaphoreGive(configMutex);
+        }
+        char logMsg[MAX_LOG_MSG];
+        snprintf(logMsg, sizeof(logMsg), "Grupo de maquina carregado: %d", g);
+        registrarLog('I', logMsg);
+      }
       f.close();
     }
     xSemaphoreGive(fsMutex);
@@ -279,7 +329,6 @@ void handleSalvar(AsyncWebServerRequest *request){
   iniciarSTA();
 }
 
-
 // ===== SENSORES =====
 void removerGravidade(float x, float y, float z,
                       float &linX, float &linY, float &linZ){
@@ -346,7 +395,15 @@ void processarFFT(float tempAtual){
     return;
   }
 
-  double velRMS = (acelRMS / (2.0 * PI * freq)) * 1000.0;
+  // integração espectral: soma contribuição de cada bin de frequência
+  double somaVelQuad = 0;
+  for(int i = 1; i < SAMPLES / 2; i++){
+    double fi = (i * samplingFrequency) / (double)SAMPLES;
+    if(fi < 1.0) continue; // ignora DC e frequências muito baixas
+    double velBin = (vReal[i] / (2.0 * PI * fi)) * 1000.0 / (SAMPLES / 2.0);
+    somaVelQuad += velBin * velBin;
+  }
+  double velRMS = sqrt(somaVelQuad);
 
   DadoSensor dado;
   dado.vibracao    = velRMS;   
@@ -483,14 +540,30 @@ String gerarJSON(){
   DadoSensor dado = {0.0f, 0.0f, 0};
   xQueuePeek(filaLeitura, &dado, 0);
 
+  ConfigMaquina cfg;
+  if(xSemaphoreTake(configMutex, pdMS_TO_TICKS(50))){
+    cfg = configAtual;
+    xSemaphoreGive(configMutex);
+  } else {
+    cfg = GRUPOS_ISO[1]; // fallback Grupo II
+  }
+
+  const char* zona = "A";
+  if(dado.vibracao >= cfg.limCD)      zona = "D";
+  else if(dado.vibracao >= cfg.limBC) zona = "C";
+  else if(dado.vibracao >= cfg.limAB) zona = "B";
+
   snprintf(jsonBuffer, sizeof(jsonBuffer),
-    "{\"vibAtual\":%.2f,\"tempAtual\":%.2f}",
-    dado.vibracao, dado.temperatura);
-    
+    "{\"vibAtual\":%.2f,\"tempAtual\":%.2f,"
+    "\"zona\":\"%s\",\"grupo\":%d,"
+    "\"limAB\":%.2f,\"limBC\":%.2f,\"limCD\":%.2f}",
+    dado.vibracao, dado.temperatura,
+    zona, cfg.grupo,
+    cfg.limAB, cfg.limBC, cfg.limCD);
+
   tempoJSON = micros() - t0;
   return String(jsonBuffer);
 }
-
 
 // buffer separado para não conflitar com jsonBuffer
 static char jsonHistBuffer[12288];
@@ -703,18 +776,25 @@ void atualizarLEDWifi(){
 }
 
 void atualizarLEDVibracao(float vRMS){
-  if(vRMS < 2.8){
+  ConfigMaquina cfg;
+  if(xSemaphoreTake(configMutex, pdMS_TO_TICKS(50))){
+    cfg = configAtual;
+    xSemaphoreGive(configMutex);
+  } else {
+    return;
+  }
+  if(vRMS < cfg.limAB){
     // verde
-    setLED(LED_VIB_R, LED_VIB_G, LED_VIB_B, 0, 255, 0);
-  } else if(vRMS < 7.1){
+    setLED(LED_VIB_R, LED_VIB_G, LED_VIB_B, 0, 200, 0);
+  } else if(vRMS < cfg.limBC){
     // amarelo
-    setLED(LED_VIB_R, LED_VIB_G, LED_VIB_B, 255, 180, 0);
-  } else if(vRMS < 18.0){
+    setLED(LED_VIB_R, LED_VIB_G, LED_VIB_B, 200, 200, 0);
+  } else if(vRMS < cfg.limCD){
     // laranja
-    setLED(LED_VIB_R, LED_VIB_G, LED_VIB_B, 255, 60, 0);
+    setLED(LED_VIB_R, LED_VIB_G, LED_VIB_B, 220, 100, 0);
   } else {
     // vermelho
-    setLED(LED_VIB_R, LED_VIB_G, LED_VIB_B, 255, 0, 0);
+    setLED(LED_VIB_R, LED_VIB_G, LED_VIB_B, 220, 0, 0);
   }
 }
 
@@ -853,8 +933,9 @@ void setup(){
   fsMutex           = xSemaphoreCreateMutex();
   historicoMutex    = xSemaphoreCreateMutex();
   logMutex          = xSemaphoreCreateMutex();
+  configMutex       = xSemaphoreCreateMutex();
 
-  Wire.begin();
+  Wire.begin(21, 22, 400000); // SDA, SCL, 400kHz Fast Mode
   Wire.beginTransmission(0x27);
   bool lcdPresente = (Wire.endTransmission() == 0);
   if(lcdPresente){
@@ -873,6 +954,7 @@ void setup(){
   } else {
     Serial.println("LittleFS OK");
     carregarHistorico();
+    carregarConfigMaquina();
 
     // estima tempo desligado pelo último timestamp do histórico
     if(historicoCount > 0){
@@ -902,7 +984,7 @@ void setup(){
 // timer de interrupção
   timer = timerBegin(1000000);                    
   timerAttachInterrupt(timer, &onTimer);      
-  timerAlarm(timer, 10000, true, 0); 
+  timerAlarm(timer, 1000000 / samplingFrequency, true, 0); 
 
   carregarWiFi();
 
@@ -939,7 +1021,7 @@ void setup(){
   server.on("/config", HTTP_GET, [](AsyncWebServerRequest *request){
     if(request->hasParam("freq")){
       int f = request->getParam("freq")->value().toInt();
-      if(f >= 10 && f <= 200){
+      if(f >= 10 && f <= 2000){
         samplingFrequency = f;
         timerAlarm(timer, 1000000 / f, true, 0);
         char logMsg[MAX_LOG_MSG];
@@ -947,11 +1029,38 @@ void setup(){
         registrarLog('I', logMsg);
         request->send(200, "text/plain", "OK");
       } else {
-        request->send(400, "text/plain", "Frequencia invalida (10-200Hz)");
+        request->send(400, "text/plain", "Frequencia invalida (10-2000Hz)");
       }
     } else {
       char buf[64];
       snprintf(buf, sizeof(buf), "{\"freq\":%d}", samplingFrequency);
+      request->send(200, "application/json", buf);
+    }
+  });
+  server.on("/maquina", HTTP_GET, [](AsyncWebServerRequest *request){
+    if(request->hasParam("grupo")){
+      int g = request->getParam("grupo")->value().toInt();
+      if(g >= 1 && g <= 4){
+        if(xSemaphoreTake(configMutex, pdMS_TO_TICKS(500))){
+          configAtual = GRUPOS_ISO[g - 1];
+          xSemaphoreGive(configMutex);
+        }
+        salvarConfigMaquina(g);
+        char logMsg[MAX_LOG_MSG];
+        snprintf(logMsg, sizeof(logMsg),
+          "Grupo de maquina alterado para: %d (A/B=%.2f B/C=%.2f C/D=%.2f)",
+          g, configAtual.limAB, configAtual.limBC, configAtual.limCD);
+        registrarLog('I', logMsg);
+        request->send(200, "text/plain", "OK");
+      } else {
+        request->send(400, "text/plain", "Grupo invalido (1-4)");
+      }
+    } else {
+      char buf[128];
+      snprintf(buf, sizeof(buf),
+        "{\"grupo\":%d,\"limAB\":%.2f,\"limBC\":%.2f,\"limCD\":%.2f}",
+        configAtual.grupo,
+        configAtual.limAB, configAtual.limBC, configAtual.limCD);
       request->send(200, "application/json", buf);
     }
   });
@@ -961,7 +1070,7 @@ void setup(){
   Serial.println("=== SISTEMA INICIADO ===");
 
   xTaskCreatePinnedToCore(taskComunicacao,   "Comunicacao",   4096, NULL, 1, NULL, 0);
-  xTaskCreatePinnedToCore(taskSensores,      "Sensores",      6144, NULL, 2, NULL, 1);
+  xTaskCreatePinnedToCore(taskSensores, "Sensores", 8192, NULL, 2, NULL, 1);
   xTaskCreatePinnedToCore(taskArmazenamento, "Armazenamento", 4096, NULL, 1, NULL, 1);
 }
 
