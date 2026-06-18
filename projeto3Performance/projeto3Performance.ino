@@ -22,6 +22,8 @@ int samplingFrequency = 800;
 #include <arduinoFFT.h>
 #include "soc/soc.h"
 #include "soc/rtc_cntl_reg.h"
+#include "esp_sleep.h"
+#include "freertos/task.h"
 #include <LiquidCrystal_I2C.h>
 
 // ===== PINOS LEDs RGB =====
@@ -48,6 +50,7 @@ typedef struct {
   float vibMedia;
   float tempMedia;
   unsigned long timestamp;
+  int grupo;
 } DadoHistorico;
 
 #define MAX_HISTORICO_RAM 288
@@ -80,6 +83,12 @@ volatile unsigned long tempoArmazenamento = 0;
 volatile unsigned long tempoJSON         = 0;
 volatile unsigned long tempoTemperatura  = 0;
 volatile unsigned long tempoWifi         = 0;
+
+
+// ===== CPU USAGE =====
+volatile float cpuUsoPct = 0.0f;
+unsigned long ultimoMedicaoCPU = 0;
+
 
 // ===== LOGS =====
 #define MAX_LOGS 100
@@ -174,6 +183,11 @@ const unsigned long wifiTimeout = 10000;
 enum WifiState { AP_MODE, CONNECTING, CONNECTED };
 WifiState wifiState = AP_MODE;
 
+// ===== GERENCIAMENTO DE ENERGIA =====
+volatile unsigned long ultimoAcesso   = 0;
+const unsigned long TIMEOUT_ECONOMICO = 30000;
+bool modoEconomico = false;
+
 
 // ===== INTERRUPÇÃO DE HARDWARE =====
 void IRAM_ATTR onTimer(){
@@ -230,7 +244,9 @@ void carregarConfigMaquina(){
           xSemaphoreGive(configMutex);
         }
         char logMsg[MAX_LOG_MSG];
-        snprintf(logMsg, sizeof(logMsg), "Grupo de maquina carregado: %d", g);
+        snprintf(logMsg, sizeof(logMsg),
+          "Config carregada: G%d | A<%.2f | B<%.2f | C<%.2f mm/s",
+          g, configAtual.limAB, configAtual.limBC, configAtual.limCD);
         registrarLog('I', logMsg);
       }
       f.close();
@@ -322,6 +338,10 @@ void handleSalvar(AsyncWebServerRequest *request){
   salvarWiFi(s, p);
   ssidSalvo  = s;
   senhaSalva = p;
+
+  char logMsg[MAX_LOG_MSG];
+  snprintf(logMsg, sizeof(logMsg), "Wi-Fi configurado: SSID=%s", s.c_str());
+  registrarLog('I', logMsg);
 
   request->send(200, "text/html", "Salvo! Reconectando...");
   iniciarSTA();
@@ -436,6 +456,7 @@ void atualizarTemperatura(float &tempAtual){
 
 
 // ===== ARMAZENAMENTO =====
+
 void salvarDado(DadoHistorico &dado){
   if(xSemaphoreTake(fsMutex, pdMS_TO_TICKS(500))){
 
@@ -465,10 +486,11 @@ void salvarDado(DadoHistorico &dado){
 
     File fa = LittleFS.open("/dados.csv", "a");
     if(fa){
-      fa.printf("%.2f,%.2f,%lu\n",
+      fa.printf("%.2f,%.2f,%lu,%d\n",
                 dado.vibMedia,
                 dado.tempMedia,
-                dado.timestamp);
+                dado.timestamp,
+                dado.grupo);
       fa.close();
     }
 
@@ -487,7 +509,7 @@ String gerarCSV(){
     "# Intervalo de amostragem: 5 minutos\n"
     "# Maximo de registros: 288 (24 horas)\n"
     "#\n"
-    "Timestamp(ms),Vibracao_media(mm/s RMS),Temperatura_media(C)\n");
+    "Vibracao_media(mm/s RMS),Temperatura_media(C),Timestamp(ms),Grupo_ISO\n");
 
   float vibMax  = -1e9, vibMin  =  1e9, vibSoma  = 0;
   float tempMax = -1e9, tempMin =  1e9, tempSoma = 0;
@@ -499,8 +521,8 @@ String gerarCSV(){
       DadoHistorico &h = historicoRAM[idx];
 
       len += snprintf(csvBuffer + len, sizeof(csvBuffer) - len,
-                "%.2f,%.2f,%lu\n",
-                h.vibMedia, h.tempMedia, h.timestamp);
+                "%.2f,%.2f,%lu,%d\n",
+                h.vibMedia, h.tempMedia, h.timestamp, h.grupo);
 
       // acumula estatísticas
       if(h.vibMedia  > vibMax)  vibMax  = h.vibMedia;
@@ -555,10 +577,13 @@ String gerarJSON(){
   snprintf(jsonBuffer, sizeof(jsonBuffer),
     "{\"vibAtual\":%.2f,\"tempAtual\":%.2f,"
     "\"zona\":\"%s\",\"grupo\":%d,"
-    "\"limAB\":%.2f,\"limBC\":%.2f,\"limCD\":%.2f}",
+    "\"limAB\":%.2f,\"limBC\":%.2f,\"limCD\":%.2f,"
+    "\"modoEconomico\":%s}",
     dado.vibracao, dado.temperatura,
     zona, cfg.grupo,
-    cfg.limAB, cfg.limBC, cfg.limCD);
+    cfg.limAB, cfg.limBC, cfg.limCD,
+    modoEconomico ? "true" : "false");
+    
 
   tempoJSON = micros() - t0;
   return String(jsonBuffer);
@@ -628,6 +653,32 @@ String gerarJSONLogs(){
 
 static char jsonPerfBuffer[2048];
 
+void atualizarUsoCPU(){
+  if(millis() - ultimoMedicaoCPU < 5000) return;
+  ultimoMedicaoCPU = millis();
+
+  UBaseType_t numTasks = uxTaskGetNumberOfTasks();
+  TaskStatus_t* taskArray = (TaskStatus_t*) pvPortMalloc(numTasks * sizeof(TaskStatus_t));
+  if(!taskArray) return;
+
+  uint32_t totalRuntime = 0;
+  UBaseType_t count = uxTaskGetSystemState(taskArray, numTasks, &totalRuntime);
+
+  uint32_t idleTime = 0;
+  for(UBaseType_t i = 0; i < count; i++){
+    if(strncmp(taskArray[i].pcTaskName, "IDLE", 4) == 0){
+      idleTime += taskArray[i].ulRunTimeCounter;
+    }
+  }
+
+  vPortFree(taskArray);
+
+  if(totalRuntime == 0){ cpuUsoPct = 0; return; }
+
+  float idlePct = ((float)idleTime / (float)totalRuntime) * 100.0f;
+  cpuUsoPct = constrain(100.0f - idlePct, 0.0f, 100.0f);
+}
+
 String gerarJSONPerformance(){
   memset(jsonPerfBuffer, 0, sizeof(jsonPerfBuffer));
 
@@ -646,6 +697,8 @@ String gerarJSONPerformance(){
   // wifi rssi
   int rssi = (wifiState == CONNECTED) ? WiFi.RSSI() : 0;
 
+  atualizarUsoCPU();
+
   snprintf(jsonPerfBuffer, sizeof(jsonPerfBuffer),
     "{"
     "\"heapLivre\":%lu,"
@@ -656,6 +709,7 @@ String gerarJSONPerformance(){
     "\"uptime\":%lu,"
     "\"rssi\":%d,"
     "\"wifiState\":\"%s\","
+    "\"cpuUso\":%.1f,"
     "\"tempoFFT\":%lu,"
     "\"tempoArmazenamento\":%lu,"
     "\"tempoJSON\":%lu,"
@@ -666,6 +720,7 @@ String gerarJSONPerformance(){
     flashTotal, sketchUsado,
     uptime, rssi,
     wifiState == CONNECTED ? "Conectado" : wifiState == CONNECTING ? "Conectando" : "AP",
+    cpuUsoPct,
     tempoFFT, tempoArmazenamento, tempoJSON,
     tempoTemperatura, tempoWifi
   );
@@ -690,18 +745,20 @@ void carregarHistorico(){
       linha.trim();
 
       // ignora linhas de comentário e cabeçalho
-      if(linha.startsWith("#") || linha.startsWith("T")) continue;
+      if(linha.startsWith("#") || linha.startsWith("V")) continue;
       if(linha.length() == 0) continue;
 
       // parse: timestamp,vibMedia,tempMedia
       int c1 = linha.indexOf(',');
       int c2 = linha.indexOf(',', c1 + 1);
+      int c3 = linha.indexOf(',', c2 + 1);
       if(c1 < 0 || c2 < 0) continue;
 
       DadoHistorico h;
       h.vibMedia  = linha.substring(0, c1).toFloat();
       h.tempMedia = linha.substring(c1 + 1, c2).toFloat();
-      h.timestamp = strtoul(linha.substring(c2 + 1).c_str(), NULL, 10);
+      h.timestamp = strtoul(linha.substring(c2 + 1, c3 > 0 ? c3 : linha.length()).c_str(), NULL, 10);
+      h.grupo     = c3 > 0 ? linha.substring(c3 + 1).toInt() : 1;
 
       historicoRAM[historicoCount] = h;
       historicoCount++;
@@ -751,28 +808,22 @@ void setLED(int pinR, int pinG, int pinB, int r, int g, int b){
   analogWrite(pinB, 255 - b);
 }
 
-void atualizarLEDWifi(){
-  static unsigned long lastBlink = 0;
-  static bool estado = false;
-
-  switch(wifiState){
-    case AP_MODE:
-      // amarelo fixo
-      setLED(LED_WIFI_R, LED_WIFI_G, LED_WIFI_B, 255, 180, 0);
-      break;
-    case CONNECTING:
-      // azul piscando
-      if(millis() - lastBlink > 300){
-        estado = !estado;
-        lastBlink = millis();
-      }
-      setLED(LED_WIFI_R, LED_WIFI_G, LED_WIFI_B,
-             0, 0, estado ? 255 : 0);
-      break;
-    case CONNECTED:
-      // verde fixo
-      setLED(LED_WIFI_R, LED_WIFI_G, LED_WIFI_B, 0, 255, 0);
-      break;
+void atualizarLEDTemp(float tempC){
+  if(tempC <= 0){
+    // sem leitura válida — apaga
+    setLED(LED_WIFI_R, LED_WIFI_G, LED_WIFI_B, 0, 0, 0);
+  } else if(tempC < 40.0){
+    // frio — azul
+    setLED(LED_WIFI_R, LED_WIFI_G, LED_WIFI_B, 0, 0, 200);
+  } else if(tempC < 70.0){
+    // operação normal — verde
+    setLED(LED_WIFI_R, LED_WIFI_G, LED_WIFI_B, 0, 200, 0);
+  } else if(tempC < 90.0){
+    // atenção — amarelo
+    setLED(LED_WIFI_R, LED_WIFI_G, LED_WIFI_B, 200, 200, 0);
+  } else {
+    // crítico — vermelho
+    setLED(LED_WIFI_R, LED_WIFI_G, LED_WIFI_B, 220, 0, 0);
   }
 }
 
@@ -828,19 +879,41 @@ void atualizarLCD(){
   }
 }
 
+void gerenciarEnergia(){
+  bool semAcesso = (millis() - ultimoAcesso) > TIMEOUT_ECONOMICO
+                   && ultimoAcesso > 0;
+
+  if(semAcesso && !modoEconomico){
+    modoEconomico = true;
+    if(lcdDisponivel) lcd.noBacklight();
+    digitalWrite(LED_PIN, LOW);
+    registrarLog('I', "Modo economico ativado. Backlight e LED onboard apagados.");
+
+  } else if(!semAcesso && modoEconomico){
+    modoEconomico = false;
+    if(lcdDisponivel) lcd.backlight();
+    registrarLog('I', "Modo normal restaurado.");
+  }
+}
+
 // ===== TASKS =====
 void taskComunicacao(void *pvParameters){
   while(true){
     gerenciarWiFi();
-    atualizarLED();
-    atualizarLEDWifi();
+    gerenciarEnergia();
 
-    // vibração atual para o LED
+    // LEDs RGB sempre atualizados
     DadoSensor dadoAtual = {0.0f, 0.0f, 0};
     xQueuePeek(filaLeitura, &dadoAtual, 0);
     atualizarLEDVibracao(dadoAtual.vibracao);
+    atualizarLEDTemp(dadoAtual.temperatura);
 
-    atualizarLCD();
+    // LED onboard e LCD só no modo normal
+    if(!modoEconomico){
+      atualizarLED();
+      atualizarLCD();
+    }
+
     vTaskDelay(100 / portTICK_PERIOD_MS);
   }
 }
@@ -894,6 +967,7 @@ void taskArmazenamento(void *pvParameters){
       media.vibMedia  = acumVib  / contagem;
       media.tempMedia = acumTemp / contagem;
       media.timestamp = millis();
+      media.grupo     = configAtual.grupo;
 
       // salva na flash
       salvarDado(media);
@@ -1013,19 +1087,24 @@ void setup(){
   }
 
   server.on("/data", HTTP_GET, [](AsyncWebServerRequest *request){
+    ultimoAcesso = millis();
     request->send(200, "application/json", gerarJSON());
   });
   server.on("/historico", HTTP_GET, [](AsyncWebServerRequest *request){
+    ultimoAcesso = millis();
     request->send(200, "application/json", gerarJSONHistorico());
   });
   server.on("/csv", HTTP_GET, [](AsyncWebServerRequest *request){
+    ultimoAcesso = millis();
     request->send(200, "text/csv", gerarCSV());
   });
   server.on("/salvar", HTTP_GET, handleSalvar);
   server.on("/performance", HTTP_GET, [](AsyncWebServerRequest *request){
+    ultimoAcesso = millis();
     request->send(200, "application/json", gerarJSONPerformance());
   });
   server.on("/logs", HTTP_GET, [](AsyncWebServerRequest *request){
+    ultimoAcesso = millis();
     request->send(200, "application/json", gerarJSONLogs());
   });
   server.on("/logs/limpar", HTTP_GET, [](AsyncWebServerRequest *request){
@@ -1051,7 +1130,8 @@ void setup(){
         }
 
         char logMsg[MAX_LOG_MSG];
-        snprintf(logMsg, sizeof(logMsg), "Frequencia alterada para %dHz.", f);
+        snprintf(logMsg, sizeof(logMsg),
+          "Frequencia: %dHz | faixa ate %dHz (Nyquist)", f, f / 2);
         registrarLog('I', logMsg);
         request->send(200, "text/plain", "OK");
       } else {
@@ -1072,9 +1152,10 @@ void setup(){
           xSemaphoreGive(configMutex);
         }
         salvarConfigMaquina(g);
+
         char logMsg[MAX_LOG_MSG];
         snprintf(logMsg, sizeof(logMsg),
-          "Grupo de maquina alterado para: %d (A/B=%.2f B/C=%.2f C/D=%.2f)",
+          "Grupo alterado: G%d | A<%.2f | B<%.2f | C<%.2f mm/s",
           g, configAtual.limAB, configAtual.limBC, configAtual.limCD);
         registrarLog('I', logMsg);
         request->send(200, "text/plain", "OK");
@@ -1091,9 +1172,21 @@ void setup(){
     }
   });
   server.serveStatic("/", LittleFS, "/").setDefaultFile("index.html");
+  ultimoAcesso = millis(); // não entra em modo econômico logo no boot
+  server.begin();
   server.begin();
 
   Serial.println("=== SISTEMA INICIADO ===");
+
+  esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_AUTO);
+  esp_sleep_pd_config(ESP_PD_DOMAIN_XTAL,       ESP_PD_OPTION_AUTO);
+
+  ultimoAcesso = millis();
+
+  // habilita contador de tempo de execução das tasks
+  // necessário para medir uso de CPU
+  portDISABLE_INTERRUPTS();
+  portENABLE_INTERRUPTS();
 
   xTaskCreatePinnedToCore(taskComunicacao,   "Comunicacao",   4096, NULL, 1, NULL, 0);
   xTaskCreatePinnedToCore(taskSensores, "Sensores", 8192, NULL, 2, NULL, 1);

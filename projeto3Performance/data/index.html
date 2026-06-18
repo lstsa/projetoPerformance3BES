@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ESP Monitor</title>
+<title>VITRA</title>
 <style>
 /* ===== RESET E BASE ===== */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -303,7 +303,7 @@ input[type=text], input[type=password], input[type=number] {
 
 <!-- ===== MENU LATERAL ===== -->
 <nav id="sidebar">
-  <h1>ESP MONITOR</h1>
+  <h1>VITRA</h1>
   <div class="nav-item ativo" onclick="mostrar('home', this)">
     <span class="nav-icon">📊</span> Home
   </div>
@@ -483,6 +483,19 @@ input[type=text], input[type=password], input[type=number] {
           <div class="p-label">RSSI</div>
           <div class="p-valor" id="p-rssi">—</div>
           <div class="p-unit">dBm</div>
+        </div>
+        <div class="perf-card">
+          <div class="p-label">Uso de CPU</div>
+          <div class="p-valor" id="p-cpu">—</div>
+          <div class="p-unit">%</div>
+          <div class="barra-container">
+            <div class="barra" id="b-cpu" style="width:0%;background:#e67e22"></div>
+          </div>
+        </div>
+        <div class="perf-card">
+          <div class="p-label">Modo</div>
+          <div class="p-valor" id="p-modo" style="font-size:14px">—</div>
+          <div class="p-unit"></div>
         </div>
       </div>
     </div>
@@ -671,8 +684,11 @@ input[type=text], input[type=password], input[type=number] {
   <section id="sobre" class="secao">
     <div class="card">
       <div class="sobre-bloco">
-        <h3>ESP Monitor — Monitoramento de Sistemas Ciberfísicos</h3>
-        <p>Sistema embarcado de monitoramento de vibração e temperatura conforme ISO 10816, desenvolvido com ESP32.</p>
+        <h3>VITRA</h3>
+        <p style="font-size:12px;color:#888;margin-bottom:6px">
+          Vibração e Temperatura como Rastreamento de Anomalias
+        </p>
+        <p>Sistema embarcado de monitoramento de vibração e temperatura conforme ISO 10816-3, desenvolvido com ESP32.</p>
       </div>
       <div class="sobre-bloco">
         <h3>Universidade</h3>
@@ -685,8 +701,25 @@ input[type=text], input[type=password], input[type=number] {
         </ul>
       </div>
       <div class="sobre-bloco">
-        <h3>Contato</h3>
-        <p>— e-mail —</p>
+        <h3>LEDs indicadores</h3>
+        <p><strong>LED de vibração</strong> — zonas ISO 10816 conforme grupo configurado:</p>
+        <ul>
+          <li>🟢 Verde — Zona A (ótimo)</li>
+          <li>🟡 Amarelo — Zona B (aceitável)</li>
+          <li>🟠 Laranja — Zona C (atenção)</li>
+          <li>🔴 Vermelho — Zona D (crítico)</li>
+        </ul>
+        <p style="margin-top:8px"><strong>LED de temperatura</strong> — escala de referência geral para maquinário:</p>
+        <ul>
+          <li>🔵 Azul — abaixo de 40°C (frio / ambiente)</li>
+          <li>🟢 Verde — 40–70°C (operação normal)</li>
+          <li>🟡 Amarelo — 70–90°C (atenção)</li>
+          <li>🔴 Vermelho — acima de 90°C (crítico)</li>
+        </ul>
+        <p style="margin-top:8px;font-size:12px;color:#888">
+          ⚠️ Os limites de temperatura são referência geral. Consulte o fabricante
+          da máquina para limites específicos do seu equipamento.
+        </p>
       </div>
       <div class="sobre-bloco">
         <h3>Repositório</h3>
@@ -696,17 +729,84 @@ input[type=text], input[type=password], input[type=number] {
 
     <div class="card">
       <div class="card-titulo">Changelog</div>
+
       <div class="changelog-item">
-        <div class="version">v1.0.0</div>
-        <div class="date">2026</div>
+        <div class="version">v1.0.0 — Base do sistema</div>
+        <div class="date">Abril 2026</div>
         <ul>
-          <li>Leitura de vibração (mm/s RMS — ISO 10816) e temperatura</li>
-          <li>Histórico de 24h com persistência em flash</li>
-          <li>Interface web com 4 gráficos e menu lateral</li>
-          <li>Aba de performance, logs e configurações</li>
-          <li>Configuração de Wi-Fi e frequência de amostragem via interface</li>
+          <li>Firmware ESP32 com FreeRTOS: 3 tasks (Comunicacao, Sensores, Armazenamento)</li>
+          <li>Interrupção de hardware via timer para coleta do ADXL345</li>
+          <li>Leitura de temperatura via DS18B20 (assíncrona, sem bloqueio)</li>
+          <li>Servidor web embarcado com LittleFS</li>
+          <li>Configuração de Wi-Fi via interface sem regravação de firmware</li>
+          <li>Interface web inicial com gráficos de tempo real</li>
         </ul>
       </div>
+
+      <div class="changelog-item">
+        <div class="version">v1.1.0 — Conformidade ISO 10816</div>
+        <div class="date">Abril–Maio 2026</div>
+        <ul>
+          <li>Cálculo de vibração por integração espectral da FFT (mm/s RMS)</li>
+          <li>Remoção de gravidade com filtro passa-alta exponencial</li>
+          <li>Frequência de amostragem configurável via interface (10–2000 Hz)</li>
+          <li>Buffer de amostras ampliado para 256 pontos</li>
+          <li>Persistência de frequência configurada na flash</li>
+        </ul>
+      </div>
+
+      <div class="changelog-item">
+        <div class="version">v1.2.0 — Histórico e CSV</div>
+        <div class="date">Maio 2026</div>
+        <ul>
+          <li>Histórico de 24h: médias de 5 em 5 minutos (288 registros)</li>
+          <li>Persistência do histórico na flash com carregamento no boot</li>
+          <li>Exportação CSV com estatísticas e coluna de grupo ISO</li>
+          <li>4 gráficos: tempo real (5 min) e histórico (24h)</li>
+          <li>Gráficos históricos persistem após reinício e atualização de página</li>
+        </ul>
+      </div>
+
+      <div class="changelog-item">
+        <div class="version">v1.3.0 — Interface e Performance</div>
+        <div class="date">Maio 2026</div>
+        <ul>
+          <li>Interface reestruturada: menu lateral, 5 abas</li>
+          <li>Aba Performance: heap, uptime, Wi-Fi, RSSI, uso de CPU, tempo de execução de funções</li>
+          <li>Aba Logs: terminal ao vivo com níveis INFO/WARN/ERRO</li>
+          <li>Responsividade mobile com menu hamburguer</li>
+          <li>Gráficos com escala fixa 0–20 mm/s, eixos e legenda</li>
+        </ul>
+      </div>
+
+      <div class="changelog-item">
+        <div class="version">v1.4.0 — Classificação ISO 10816-3</div>
+        <div class="date">Maio–Junho 2026</div>
+        <ul>
+          <li>Seletor de grupo de máquina (I, II, III, IV)</li>
+          <li>Faixas de cor nos gráficos por zona ISO (A, B, C, D)</li>
+          <li>Marcação vertical ao trocar de grupo com cores por período</li>
+          <li>Badge de zona atual no header</li>
+          <li>LED de vibração com zonas ISO dinâmicas</li>
+          <li>LED de temperatura com escala industrial (azul/verde/amarelo/vermelho)</li>
+          <li>Coluna de grupo ISO no CSV</li>
+        </ul>
+      </div>
+
+      <div class="changelog-item">
+        <div class="version">v1.5.0 — Hardware e Energia</div>
+        <div class="date">Junho 2026</div>
+        <ul>
+          <li>Suporte a LCD 16x2 I2C com IP e modo Wi-Fi</li>
+          <li>2 LEDs RGB: vibração (zonas ISO) e temperatura (escala industrial)</li>
+          <li>Modo econômico automático após 30s sem acesso</li>
+          <li>Polling adaptativo: intervalos aumentam com inatividade do usuário</li>
+          <li>Wi-Fi modem sleep ativo em operação normal</li>
+          <li>Redução estimada de ~25–30% no consumo em modo econômico</li>
+          <li>Projeto renomeado para VITRA — Vibração e Temperatura como Rastreamento de Anomalias</li>
+        </ul>
+      </div>
+
     </div>
   </section>
 
@@ -741,6 +841,7 @@ let heapDados = [];
 // configuração de máquina
 let limAB = 0.71, limBC = 1.80, limCD = 4.50;
 let grupoAtual = 1;
+let modoEconomicoAtivo = false;
 
 // marcações de mudança de grupo nos gráficos
 // cada entrada: { indice: N, limAB, limBC, limCD }
@@ -962,6 +1063,23 @@ function atualizarMinMax(){
   }
 }
 
+// ===== INATIVIDADE DO USUÁRIO =====
+let ultimaInteracao = Date.now();
+const TIMEOUT_INATIVO = 30000; // 30s sem interação = reduz polling
+
+function registrarInteracao(){
+  ultimaInteracao = Date.now();
+}
+
+document.addEventListener('mousemove',  registrarInteracao);
+document.addEventListener('touchstart', registrarInteracao);
+document.addEventListener('keydown',    registrarInteracao);
+document.addEventListener('click',      registrarInteracao);
+
+function estaInativo(){
+  return (Date.now() - ultimaInteracao) > TIMEOUT_INATIVO;
+}
+
 // ===== LOOP TEMPO REAL (2s) =====
 let rodando = false;
 async function loop(){
@@ -988,6 +1106,7 @@ async function loop(){
     if(d.limAB) limAB = d.limAB;
     if(d.limBC) limBC = d.limBC;
     if(d.limCD) limCD = d.limCD;
+    if(d.modoEconomico !== undefined) modoEconomicoAtivo = d.modoEconomico;
 
     // avança distFinal de todas as marcações RT a cada novo ponto
     marcacoesRT.forEach(m => m.distFinal++);
@@ -1018,7 +1137,7 @@ async function loop(){
     atualizarMinMax();
   } catch(e){ console.warn('fetch /data:', e); }
   rodando = false;
-  setTimeout(loop, 2000);
+  setTimeout(loop, estaInativo() ? 15000 : 2000);
 }
 
 // ===== LOOP HISTÓRICO (30s) =====
@@ -1050,7 +1169,7 @@ async function loopHistorico(){
 
     atualizarMinMax();
   } catch(e){ console.warn('fetch /historico:', e); }
-  setTimeout(loopHistorico, 30000);
+  setTimeout(loopHistorico, estaInativo() ? 300000 : 30000);
 }
 
 // ===== LOOP PERFORMANCE (5s) =====
@@ -1065,6 +1184,9 @@ async function loopPerformance(){
     document.getElementById('p-uptime').textContent    = d.uptime ?? '—';
     document.getElementById('p-wifi').textContent      = d.wifiState ?? '—';
     document.getElementById('p-rssi').textContent      = d.rssi ?? '—';
+    document.getElementById('p-cpu').textContent       = d.cpuUso != null ? d.cpuUso.toFixed(1) : '—';
+    document.getElementById('b-cpu').style.width       = (d.cpuUso ?? 0).toFixed(0) + '%';
+    document.getElementById('p-modo').textContent      = modoEconomicoAtivo ? 'Econômico' : 'Normal';
     document.getElementById('t-fft').textContent       = d.tempoFFT ?? '—';
     document.getElementById('t-arm').textContent       = d.tempoArmazenamento ?? '—';
     document.getElementById('t-json').textContent      = d.tempoJSON ?? '—';
@@ -1088,7 +1210,7 @@ async function loopPerformance(){
     desenhar(document.getElementById('heapChart'), heapDados, '#4fc3f7', 'ey-heap');
 
   } catch(e){ console.warn('fetch /performance:', e); }
-  setTimeout(loopPerformance, 5000);
+  setTimeout(loopPerformance, estaInativo() ? 30000 : 5000);
 }
 
 // ===== LOOP LOGS (3s) =====
@@ -1108,7 +1230,7 @@ async function loopLogs(){
     terminal.innerHTML = html;
     terminal.scrollTop = terminal.scrollHeight;
   } catch(e){ console.warn('fetch /logs:', e); }
-  setTimeout(loopLogs, 3000);
+  setTimeout(loopLogs, estaInativo() ? 30000 : 3000);
 }
 
 function exportarLogs(){
